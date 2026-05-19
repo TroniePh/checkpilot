@@ -1,6 +1,6 @@
 {
-  "version": "2.2.0",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.2.0/CheckPilot_Setup_v2.2.0.exe",
-  "changelog": "- Phiên bản hiện tại\n- Ổn định",
+  "version": "2.3.0",
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.3.0/CheckPilot_Setup_v2.3.0.exe",
+  "changelog": "- Lịch hẹn nhiều giờ/ngày (8:00, 14:00, 20:00...)\n- Preview xem trước dữ liệu trước khi chạy thử\n- Hệ thống tự động cập nhật\n- Cài đặt silent upgrade",
   "mandatory": false
 }
