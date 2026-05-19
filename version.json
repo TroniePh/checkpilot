@@ -1,7 +1,7 @@
 {
-  "version": "2.3.1",
+  "version": "2.3.2",
   "update_type": "full",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.3.1/CheckPilot_Setup_v2.3.1.exe",
-  "changelog": "- Sửa lỗi app tự mở thêm cửa sổ mới\n- Cải thiện hệ thống cập nhật",
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.3.2/CheckPilot_Setup_v2.3.2.exe",
+  "changelog": "- Hiển thị version đúng trong Thông tin\n- Sửa lỗi watchdog\n- Auto-update hoạt động đầy đủ",
   "mandatory": false
 }
