@@ -1,7 +1,7 @@
 {
-  "version": "2.3.2",
+  "version": "2.4.0",
   "update_type": "full",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.3.2/CheckPilot_Setup_v2.3.2.exe",
-  "changelog": "- Hiển thị version đúng trong Thông tin\n- Sửa lỗi watchdog\n- Auto-update hoạt động đầy đủ",
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.4.0/CheckPilot_Setup_v2.4.0.exe",
+  "changelog": "- Engine upgrade: nhap so, text, dropdown, checkbox, datetime\n- Upload anh dung vi tri\n- Tu dong tim file anh\n- Login tu dong\n- Navigate folder template",
   "mandatory": false
 }
