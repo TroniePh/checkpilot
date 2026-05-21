@@ -1,7 +1,7 @@
 {
-  "version": "2.4.0",
+  "version": "2.4.1",
   "update_type": "full",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.4.0/CheckPilot_Setup_v2.4.0.exe",
-  "changelog": "- Engine upgrade: nhap so, text, dropdown, checkbox, datetime\n- Upload anh dung vi tri\n- Tu dong tim file anh\n- Login tu dong\n- Navigate folder template",
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.4.1/CheckPilot_Setup_v2.4.1.exe",
+  "changelog": "- Fix treo 33s o temperature fields\n- Fix auto-update check\n- Cho phep chon thu muc cai dat",
   "mandatory": false
 }
