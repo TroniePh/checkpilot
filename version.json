@@ -1,7 +1,7 @@
 {
-  "version": "2.4.1",
+  "version": "2.4.2",
   "update_type": "full",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.4.1/CheckPilot_Setup_v2.4.1.exe",
-  "changelog": "- Fix treo 33s o temperature fields\n- Fix auto-update check\n- Cho phep chon thu muc cai dat",
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.4.2/CheckPilot_Setup_v2.4.2.exe",
+  "changelog": "- Fix upload anh vao dung vi tri (khong upload vao chu ky nua)",
   "mandatory": false
 }
