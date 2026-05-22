@@ -1,7 +1,7 @@
 {
-  "version": "2.4.5",
+  "version": "2.4.6",
   "update_type": "full",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.4.5/CheckPilot_Setup_v2.4.5.exe",
-  "changelog": "- Fix verify Add media khong dem nham anh mau ben duoi chemical question",
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.4.6/CheckPilot_Setup_v2.4.6.exe",
+  "changelog": "- Fix Add media chemical: bam tiep Attach files de mo file chooser",
   "mandatory": true
 }
