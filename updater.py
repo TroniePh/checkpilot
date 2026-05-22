@@ -16,7 +16,7 @@ from config import DATA_DIR, INSTALL_DIR
 
 logger = logging.getLogger(__name__)
 
-CURRENT_VERSION = "2.3.2"
+CURRENT_VERSION = "2.4.5"
 # Update URL — host file version.json ở đây (GitHub raw, server riêng, etc.)
 VERSION_CHECK_URL = "https://raw.githubusercontent.com/TroniePh/checkpilot/main/version.json"
 UPDATE_CHECK_FILE = os.path.join(DATA_DIR, "last_update_check.json")
@@ -224,12 +224,15 @@ def _version_newer(remote: str, local: str) -> bool:
 
 
 def _checked_recently() -> bool:
-    """Return True if checked within last 24 hours."""
+    """Return True if checked within last 24 hours AND same version."""
     if not os.path.exists(UPDATE_CHECK_FILE):
         return False
     try:
         with open(UPDATE_CHECK_FILE, "r") as f:
             data = json.load(f)
+        # If version changed (new install), force re-check
+        if data.get("version") != CURRENT_VERSION:
+            return False
         last = datetime.fromisoformat(data.get("last_check", "2000-01-01"))
         return (datetime.now() - last) < timedelta(hours=24)
     except:
@@ -239,4 +242,4 @@ def _checked_recently() -> bool:
 def _save_check_time():
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(UPDATE_CHECK_FILE, "w") as f:
-        json.dump({"last_check": datetime.now().isoformat()}, f)
+        json.dump({"last_check": datetime.now().isoformat(), "version": CURRENT_VERSION}, f)

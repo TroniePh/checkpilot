@@ -1,7 +1,7 @@
 {
-  "version": "2.4.2",
+  "version": "2.4.5",
   "update_type": "full",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.4.2/CheckPilot_Setup_v2.4.2.exe",
-  "changelog": "- Fix upload anh vao dung vi tri (khong upload vao chu ky nua)",
-  "mandatory": false
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.4.5/CheckPilot_Setup_v2.4.5.exe",
+  "changelog": "- Fix verify Add media khong dem nham anh mau ben duoi chemical question",
+  "mandatory": true
 }
