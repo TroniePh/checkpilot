@@ -485,30 +485,15 @@ class AutomationEngine:
         tmpl.scroll_into_view_if_needed()
         time.sleep(0.5)
 
-        # Find "Start inspection" button near this template
-        # Try: same row/card, or hover to reveal button
-        row = tmpl.locator("xpath=ancestor::*[contains(@class,'row') or contains(@class,'item') or contains(@class,'card') or contains(@class,'template')]").first
-        if row.count() == 0:
-            row = tmpl.locator("xpath=ancestor::tr").first
-        if row.count() == 0:
-            row = tmpl.locator("xpath=../..").first
-
-        start_btn = None
-        if row.count() > 0:
-            start_btn = row.locator(
-                'a:has-text("Start"), button:has-text("Start"), '
-                'a:has-text("Start inspection"), button:has-text("Start inspection"), '
-                'a:has-text("New inspection"), button:has-text("New inspection")'
-            ).first
-
         clicked = False
+        start_btn = self._find_template_start_button(template_name)
         if start_btn and start_btn.count() > 0:
             try:
                 start_btn.click()
                 clicked = True
-                self._log("  Clicked Start inspection (in row)")
-            except:
-                pass
+                self._log("  Clicked Start inspection (matched template row)")
+            except Exception as e:
+                self._log(f"  WARN: Matched Start click failed: {str(e)[:60]}")
 
         if not clicked:
             # Try clicking template name first (may open detail/start dialog)
@@ -542,6 +527,7 @@ class AutomationEngine:
         if not self._is_inspection_form_open(template_name):
             self._log(f"  ERROR: Inspection form did not open for '{template_name}'")
             self._log(f"  URL: {self.page.url}")
+            self._log(f"  Visible titles: {self._visible_title_debug_texts()}")
             ss = self._screenshot_error("inspection_form_not_open")
             self._save_html_dump("inspection_form_not_open")
             raise RuntimeError(
@@ -569,10 +555,163 @@ class AutomationEngine:
             try:
                 loc = self.page.locator(selector).first
                 if loc.count() > 0 and loc.is_visible():
-                    return True
+                    return self._opened_template_matches(template_name)
             except:
                 continue
         return False
+
+    def _find_template_start_button(self, template_name: str) -> Optional[Locator]:
+        """
+        Find the Start/New inspection button scoped to the smallest visible
+        template row/card that contains the requested template name.
+        """
+        try:
+            marker = self.page.evaluate(
+                """
+                (templateName) => {
+                    const normalize = (s) => (s || "")
+                        .replace(/\\s+/g, " ")
+                        .trim()
+                        .toLowerCase();
+                    const compact = (s) => normalize(s).replace(/[^a-z0-9]+/g, "");
+                    const wanted = normalize(templateName);
+                    const wantedCompact = compact(templateName);
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.display !== "none" &&
+                            style.visibility !== "hidden" &&
+                            rect.width > 0 &&
+                            rect.height > 0;
+                    };
+                    const textOf = (el) => normalize([
+                        el.innerText,
+                        el.textContent,
+                        el.getAttribute("aria-label"),
+                        el.getAttribute("title")
+                    ].filter(Boolean).join(" "));
+                    const isStart = (el) => {
+                        const text = textOf(el);
+                        return text.includes("start inspection") ||
+                            text.includes("new inspection") ||
+                            text === "start" ||
+                            text === "begin";
+                    };
+                    const matchesTemplate = (el) => {
+                        const text = textOf(el);
+                        const textCompact = compact(text);
+                        return text === wanted ||
+                            text.includes(wanted) ||
+                            (wantedCompact.length >= 10 && textCompact.includes(wantedCompact));
+                    };
+                    const titleNodes = Array.from(document.querySelectorAll(
+                        "a,span,p,div,h1,h2,h3,h4,[data-testid],[role='heading']"
+                    )).filter((el) => visible(el) && matchesTemplate(el));
+                    let bestButton = null;
+                    let bestArea = Number.MAX_SAFE_INTEGER;
+                    for (const node of titleNodes) {
+                        let row = node;
+                        for (let depth = 0; depth < 10 && row; depth += 1, row = row.parentElement) {
+                            if (!visible(row) || !matchesTemplate(row)) continue;
+                            const rect = row.getBoundingClientRect();
+                            const area = rect.width * rect.height;
+                            if (area <= 0 || area > 450000) continue;
+                            const buttons = Array.from(row.querySelectorAll(
+                                "button,a,[role='button']"
+                            )).filter((btn) => visible(btn) && isStart(btn));
+                            if (!buttons.length) continue;
+                            if (area < bestArea) {
+                                bestButton = buttons[0];
+                                bestArea = area;
+                            }
+                            break;
+                        }
+                    }
+                    if (!bestButton) return "";
+                    const id = "cp-template-start-" + Date.now().toString(36) + "-" +
+                        Math.random().toString(36).slice(2);
+                    bestButton.setAttribute("data-checkpilot-template-start", id);
+                    return id;
+                }
+                """,
+                template_name,
+            )
+            if not marker:
+                return None
+            loc = self.page.locator(f'[data-checkpilot-template-start="{marker}"]').first
+            if loc.count() > 0:
+                loc.scroll_into_view_if_needed()
+                time.sleep(0.2)
+                return loc
+        except Exception as e:
+            self._log(f"  DEBUG: Template row match failed: {str(e)[:60]}")
+        return None
+
+    def _opened_template_matches(self, template_name: str) -> bool:
+        try:
+            return bool(self.page.evaluate(
+                """
+                (templateName) => {
+                    const normalize = (s) => (s || "")
+                        .replace(/\\s+/g, " ")
+                        .trim()
+                        .toLowerCase();
+                    const compact = (s) => normalize(s).replace(/[^a-z0-9]+/g, "");
+                    const wantedCompact = compact(templateName);
+                    if (!wantedCompact) return true;
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.display !== "none" &&
+                            style.visibility !== "hidden" &&
+                            rect.width > 0 &&
+                            rect.height > 0;
+                    };
+                    const candidates = Array.from(document.querySelectorAll(
+                        "h1,h2,h3,h4,[role='heading'],[data-testid*='title'],header"
+                    )).filter(visible);
+                    for (const el of candidates) {
+                        const textCompact = compact(el.innerText || el.textContent || "");
+                        if (textCompact.length >= 8 &&
+                            (textCompact.includes(wantedCompact) || wantedCompact.includes(textCompact))) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+                """,
+                template_name,
+            ))
+        except:
+            return False
+
+    def _visible_title_debug_texts(self) -> str:
+        try:
+            values = self.page.evaluate(
+                """
+                () => {
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.display !== "none" &&
+                            style.visibility !== "hidden" &&
+                            rect.width > 0 &&
+                            rect.height > 0;
+                    };
+                    const normalize = (s) => (s || "").replace(/\\s+/g, " ").trim();
+                    return Array.from(document.querySelectorAll(
+                        "h1,h2,h3,h4,[role='heading'],[data-testid*='title'],header"
+                    ))
+                        .filter(visible)
+                        .map((el) => normalize(el.innerText || el.textContent || ""))
+                        .filter(Boolean)
+                        .slice(0, 8);
+                }
+                """
+            )
+            return " | ".join(values)
+        except:
+            return ""
 
     # ── Fill Header ──
     def _fill_header(self, data: InspectionData):

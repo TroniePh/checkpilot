@@ -348,7 +348,7 @@ class App(ctk.CTk):
         self.selected_insp_lbl.pack(side="right")
         self.inspection_list_frame = ctk.CTkScrollableFrame(
             c1,
-            height=112,
+            height=72,
             fg_color=BG,
             corner_radius=7,
             border_width=1,
@@ -357,27 +357,7 @@ class App(ctk.CTk):
         self.inspection_list_frame.pack(fill="x", padx=12, pady=(0, 10))
         self._render_inspection_list()
 
-        # Options
-        c2 = self._card("Tùy chọn")
-        orow = ctk.CTkFrame(c2, fg_color="transparent"); orow.pack(fill="x", padx=12, pady=8)
-        self.rv = ctk.BooleanVar(value=False)
-        self.av = ctk.BooleanVar(value=True)
-        self.sv = ctk.BooleanVar(value=True)
-        self.adv = ctk.BooleanVar(value=True)
-        self.rv.trace_add("write", lambda *_: self._on_test_mode_changed())
-        self.av.trace_add("write", lambda *_: self._update_auto_submit_warning())
-        for txt, var in [("Test mode - không auto submit", self.rv), ("Auto submit sau khi hoàn tất", self.av), ("Từng inspection", self.sv), ("Ngày = hôm nay", self.adv)]:
-            ctk.CTkCheckBox(orow, text=txt, variable=var, font=ctk.CTkFont(family=F, size=11),
-                           text_color=DIM, border_color=BORDER, checkmark_color=TEAL).pack(side="left", padx=(0,14))
-        self.auto_warn_lbl = ctk.CTkLabel(
-            c2,
-            text="Auto mode sẽ tự Complete/Submit inspection.",
-            font=ctk.CTkFont(family=F, size=10),
-            text_color=AMBER,
-        )
-        self.auto_warn_lbl.pack(anchor="w", padx=12, pady=(0,8))
-
-        # Controls
+        # Controls stay above optional settings so Start/Pause/Stop are always visible.
         c3 = self._card("Điều khiển")
         cr = ctk.CTkFrame(c3, fg_color="transparent"); cr.pack(fill="x", padx=12, pady=8)
         self.brun_now = ctk.CTkButton(cr, text="Chạy ngay", width=100, height=36, corner_radius=7,
@@ -416,6 +396,25 @@ class App(ctk.CTk):
         self.prog = ctk.CTkProgressBar(c3, height=4, corner_radius=2, progress_color=TEAL, fg_color=BORDER)
         self.prog.pack(fill="x", padx=12, pady=(0,10)); self.prog.set(0)
 
+        # Options
+        c2 = self._card("Tùy chọn")
+        orow = ctk.CTkFrame(c2, fg_color="transparent"); orow.pack(fill="x", padx=12, pady=8)
+        self.rv = ctk.BooleanVar(value=False)
+        self.av = ctk.BooleanVar(value=True)
+        self.sv = ctk.BooleanVar(value=True)
+        self.adv = ctk.BooleanVar(value=True)
+        self.rv.trace_add("write", lambda *_: self._on_test_mode_changed())
+        self.av.trace_add("write", lambda *_: self._update_auto_submit_warning())
+        for txt, var in [("Test mode - không auto submit", self.rv), ("Auto submit sau khi hoàn tất", self.av), ("Từng inspection", self.sv), ("Ngày = hôm nay", self.adv)]:
+            ctk.CTkCheckBox(orow, text=txt, variable=var, font=ctk.CTkFont(family=F, size=11),
+                           text_color=DIM, border_color=BORDER, checkmark_color=TEAL).pack(side="left", padx=(0,14))
+        self.auto_warn_lbl = ctk.CTkLabel(
+            c2,
+            text="Auto mode sẽ tự Complete/Submit inspection.",
+            font=ctk.CTkFont(family=F, size=10),
+            text_color=AMBER,
+        )
+        self.auto_warn_lbl.pack(anchor="w", padx=12, pady=(0,8))
 
     def _pg_history(self):
         self._cls()

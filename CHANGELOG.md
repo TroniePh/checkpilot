@@ -1,5 +1,13 @@
 # Changelog — CheckPilot™
 
+## v2.5.1 (2026-05-25)
+
+- Fixed Automation layout so run controls stay visible after the CSV template picker loads.
+- Fixed template start matching to click the Start button scoped to the selected template row/card.
+- Added a form-title guard so automation stops if SafetyCulture opens the wrong template.
+
+---
+
 ## v2.5.0 (2026-05-25)
 
 - Added a CSV template/inspection picker in Automation after loading data.
