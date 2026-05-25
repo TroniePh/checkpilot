@@ -34,6 +34,8 @@ def load_autostart_config() -> dict:
         "last_image_folder": "",
         "auto_load_on_start": True,
         "run_on_windows_startup": False,
+        "template_folder_name": "Yummi Sushi - Daily Required Checklists",
+        "template_folder_url": "",
     }
 
 

@@ -379,89 +379,128 @@ class AutomationEngine:
 
     # ── Navigation ──
     def _go_to_inspections(self):
-        """Navigate to Inspections page."""
-        self._log("Navigating to Inspections...")
-        self.page.goto(SC_INSPECTIONS_URL, timeout=30000)
+        """Navigate to Templates page and open the correct folder."""
+        from config import SC_TEMPLATES_URL
+        from autostart import load_autostart_config
+
+        # Get folder name from config
+        acfg = load_autostart_config()
+        folder_name = acfg.get("template_folder_name", "")
+
+        # If a direct folder URL is saved, use it
+        folder_url = acfg.get("template_folder_url", "").strip()
+        if folder_url and "safetyculture.com" in folder_url:
+            self._log(f"Navigating to saved folder URL...")
+            self.page.goto(folder_url, timeout=30000)
+        else:
+            self._log("Navigating to Templates...")
+            self.page.goto(SC_TEMPLATES_URL, timeout=30000)
+
         try:
             self.page.wait_for_load_state("networkidle", timeout=15000)
         except:
             pass
-        time.sleep(PAGE_LOAD_WAIT)
+        time.sleep(PAGE_LOAD_WAIT + 1)
 
-        # Check if redirected to login
+        # Check login redirect
         if "auth." in self.page.url or "/login" in self.page.url:
             self._log("  Session expired - re-logging in...")
             self.wait_for_login()
-            self.page.goto(SC_INSPECTIONS_URL, timeout=30000)
-            time.sleep(PAGE_LOAD_WAIT)
+            self.page.goto(SC_TEMPLATES_URL, timeout=30000)
+            time.sleep(PAGE_LOAD_WAIT + 1)
+
+        # If we need to click into a folder
+        if folder_name and "/templates" in self.page.url:
+            self._log(f"  Opening folder: {folder_name}")
+            folder_el = self.page.locator(f'text="{folder_name}"').first
+            if folder_el.count() == 0:
+                # Try partial match
+                folder_el = self.page.locator(f'//*[contains(text(), "{folder_name[:20]}")]').first
+            if folder_el.count() > 0:
+                folder_el.click()
+                time.sleep(PAGE_LOAD_WAIT + 1)
+                try:
+                    self.page.wait_for_load_state("networkidle", timeout=10000)
+                except:
+                    pass
+                self._log(f"  Folder opened")
+            else:
+                self._log(f"  WARNING: Folder '{folder_name}' not found, continuing on current page")
 
         self._log(f"  URL: {self.page.url}")
 
     def _start_new_inspection(self, template_name: str):
         """
-        Inspections page -> Start inspection -> search template -> select -> Begin
+        On Templates page (inside folder): find template -> click Start inspection
         """
         self._log(f"Starting: {template_name}")
         self._log(f"  URL: {self.page.url}")
 
-        # Step 1: Click "Start inspection" button
-        start_sels = [
-            'button:has-text("Start inspection")',
-            'button:has-text("New inspection")',
-            'a:has-text("Start inspection")',
-            'button[aria-label*="Start"]',
-            '[data-testid="start-inspection-button"]',
-        ]
-        if not self._click_first_found(start_sels, timeout=10000):
-            ss = self._screenshot_error("no_start_button")
-            self._save_html_dump("no_start_button")
-            raise RuntimeError(f"Cannot find Start inspection button. URL: {self.page.url}")
+        # Wait for template list to load
+        time.sleep(2)
 
-        time.sleep(PAGE_LOAD_WAIT + 1)
-
-        # Step 2: Search for template
-        search_sels = [
-            'input[placeholder*="Search"]',
-            'input[placeholder*="search"]',
-            'input[type="search"]',
-            'input[aria-label*="Search"]',
-        ]
-        search = self._find_first(search_sels, timeout=8000)
-        if search:
-            search.fill("")
-            time.sleep(0.3)
-            search.type(template_name, delay=40)
-            time.sleep(PAGE_LOAD_WAIT + 1)
-            self._log(f"  Searched: {template_name}")
-
-        # Step 3: Click matching template
-        time.sleep(1)
-        tmpl = self.page.locator(f'text="{template_name}"').first
-        if tmpl.count() == 0:
+        # Find the template by name
+        tmpl = None
+        for attempt in range(5):
+            tmpl = self.page.locator(f'text="{template_name}"').first
+            if tmpl.count() > 0:
+                break
+            # Try partial
             short = template_name[:25]
             tmpl = self.page.locator(f'//*[contains(text(), "{short}")]').first
+            if tmpl.count() > 0:
+                break
+            time.sleep(2)
 
-        if tmpl.count() == 0:
+        if not tmpl or tmpl.count() == 0:
             ss = self._screenshot_error("template_not_found")
             self._save_html_dump("template_not_found")
-            raise RuntimeError(f"Template not found: \'{template_name}\'")
+            raise RuntimeError(f"Template not found: '{template_name}'")
 
+        # Scroll template into view
         tmpl.scroll_into_view_if_needed()
-        time.sleep(0.3)
-        tmpl.click()
-        self._log("  Selected template")
-        time.sleep(PAGE_LOAD_WAIT)
+        time.sleep(0.5)
 
-        # Step 4: Click Start/Begin confirmation
-        begin_sels = [
-            'button:has-text("Start inspection")',
-            'button:has-text("Begin inspection")',
-            'button:has-text("Start")',
-            'button:has-text("Begin")',
-        ]
-        self._click_first_found(begin_sels, timeout=5000)
-        time.sleep(PAGE_LOAD_WAIT + 2)
+        # Find "Start inspection" button near this template
+        # Try: same row/card, or hover to reveal button
+        row = tmpl.locator("xpath=ancestor::*[contains(@class,'row') or contains(@class,'item') or contains(@class,'card') or contains(@class,'template')]").first
+        if row.count() == 0:
+            row = tmpl.locator("xpath=ancestor::tr").first
+        if row.count() == 0:
+            row = tmpl.locator("xpath=../..").first
 
+        start_btn = None
+        if row.count() > 0:
+            start_btn = row.locator('a:has-text("Start"), button:has-text("Start"), a:has-text("Start inspection")').first
+
+        clicked = False
+        if start_btn and start_btn.count() > 0:
+            try:
+                start_btn.click()
+                clicked = True
+                self._log("  Clicked Start inspection (in row)")
+            except:
+                pass
+
+        if not clicked:
+            # Try clicking template name first (may open detail/start dialog)
+            tmpl.click()
+            time.sleep(2)
+            # Look for Start button in popup/dialog or page
+            start_sels = [
+                'button:has-text("Start inspection")',
+                'a:has-text("Start inspection")',
+                'button:has-text("Start")',
+                'button:has-text("Begin")',
+            ]
+            if not self._click_first_found(start_sels, timeout=8000):
+                ss = self._screenshot_error("no_start_button")
+                self._save_html_dump("no_start_button")
+                raise RuntimeError(f"Cannot find Start button for '{template_name}'")
+            self._log("  Clicked Start inspection (after template click)")
+
+        # Wait for inspection form to load
+        time.sleep(PAGE_LOAD_WAIT + 3)
         try:
             self.page.wait_for_load_state("networkidle", timeout=15000)
         except:

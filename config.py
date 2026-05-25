@@ -33,8 +33,11 @@ NAVIGATION_TIMEOUT = 60000  # 60s for page navigation
 # Login redirects to app.safetyculture.com; use that as base.
 SC_BASE_URL = "https://app.safetyculture.com"
 SC_LOGIN_URL = "https://app.safetyculture.com/login"
-SC_INSPECTIONS_URL = "https://app.safetyculture.com/templates"
+SC_INSPECTIONS_URL = "https://app.safetyculture.com/inspections"
+SC_TEMPLATES_URL = "https://app.safetyculture.com/templates/index"
 SC_TEMPLATE_FOLDER_URL = os.environ.get("CHECKPILOT_TEMPLATE_FOLDER_URL", "").strip()
+# Template folder name to navigate into (e.g. "Yummi Sushi - Daily Required Checklists")
+SC_TEMPLATE_FOLDER_NAME = os.environ.get("CHECKPILOT_TEMPLATE_FOLDER", "").strip()
 
 # Retry settings
 MAX_RETRIES = 3
