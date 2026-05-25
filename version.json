@@ -1,6 +1,6 @@
 {
-  "version": "2.4.7",
+  "version": "2.4.8",
   "release_date": "2026-05-25",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/tag/v2.4.7",
-  "changelog": "v2.4.7: Fixed inspection flow (Inspections→Start→Search), auto-login Auth0, persistent log, singleton lock, run-now button"
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.4.8/CheckPilot_Setup_v2.4.8.exe",
+  "changelog": "v2.4.8: Added headless pre-login runner, stricter validation fingerprint, safer Auto Mode submit guards, light UI tone, and updated customer docs."
 }

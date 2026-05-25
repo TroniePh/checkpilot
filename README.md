@@ -72,9 +72,21 @@ Khi lịch đang bật, bấm Start ở Auto Mode sẽ không chạy ngay nếu 
 
 ## Khởi động cùng Windows
 
-Trong Settings, mục Windows, bật “Khởi động CheckPilot cùng Windows”. App sẽ đăng ký vào startup của user hiện tại. Nếu máy bị cúp điện rồi bật lại và Windows đăng nhập vào user này, CheckPilot sẽ tự mở lại, Scheduler sẽ tiếp tục chờ giờ chạy.
+Trong Settings, mục Windows có 2 lựa chọn:
 
-Nếu máy không tự đăng nhập Windows sau khi khởi động, app sẽ chỉ mở sau khi user đăng nhập.
+- “Mở app sau khi user login”: mở GUI CheckPilot sau khi user đăng nhập Windows.
+- “Runner nền trước login (headless)”: tạo Windows Task Scheduler task chạy khi máy boot, không cần mở GUI, chờ đúng lịch rồi chạy Auto Mode.
+
+Runner trước login dùng `main.py --runner --watch` và ép browser chạy headless. Windows không cho app GUI điều khiển desktop trước khi có user session, nên chế độ trước login bắt buộc dùng runner nền.
+
+Điều kiện để runner trước login chạy ổn định:
+
+- SafetyCulture session hoặc credentials đã được lưu trong CheckPilot.
+- File CSV/Excel và thư mục ảnh là đường dẫn local máy này, account chạy task có quyền đọc.
+- Nếu dữ liệu có ảnh thiếu, phải mở GUI, bấm Validate và xác nhận tiếp tục trước; runner nền không hiện popup confirm.
+- Nếu SafetyCulture yêu cầu MFA/manual login, runner sẽ dừng và gửi Telegram lỗi vì trước login không có người thao tác.
+
+Khi lịch đang bật, bấm Start ở Auto Mode sẽ không chạy sớm nếu chưa tới đúng phút đã set. Runner nền cũng dùng logic này: ví dụ lịch `05:30`, máy boot lúc `05:10` thì runner chờ tới `05:30` mới chạy.
 
 ## Telegram nhiều người nhận
 
@@ -102,13 +114,19 @@ Không hardcode folder khách hàng trong source code.
 Chạy kiểm tra cú pháp:
 
 ```powershell
-.\venv\Scripts\python.exe -m py_compile auth.py automation.py backup.py config.py data_loader.py gui.py history.py main.py notifier.py reporter.py runlock.py scheduler.py session_manager.py template_lock.py tray.py updater.py watchdog.py app_settings.py
+.\venv\Scripts\python.exe -m py_compile auth.py automation.py backup.py config.py data_loader.py gui.py history.py main.py notifier.py reporter.py runlock.py scheduler.py session_manager.py template_lock.py tray.py updater.py watchdog.py app_settings.py runner.py
 ```
 
 Load sample:
 
 ```powershell
 .\venv\Scripts\python.exe -c "from data_loader import load_data, validate_detailed; print(len(load_data('sample_data.csv','assets'))); print(validate_detailed('sample_data.csv','assets')['stats'])"
+```
+
+Kiểm tra runner nền không mở GUI:
+
+```powershell
+.\venv\Scripts\python.exe main.py --runner --status
 ```
 
 Không build installer trừ khi chuẩn bị release final.

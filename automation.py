@@ -17,7 +17,7 @@ from playwright.sync_api import (
 from config import (
     BROWSER_HEADLESS, BROWSER_SLOW_MO, DEFAULT_TIMEOUT,
     NAVIGATION_TIMEOUT, SC_BASE_URL, SC_INSPECTIONS_URL, SC_LOGIN_URL,
-    SC_TEMPLATE_FOLDER_URL,
+    SC_TEMPLATE_FOLDER_URL, SC_TEMPLATE_FOLDER_NAME,
     MAX_RETRIES, RETRY_DELAY, SCREENSHOT_DIR, LOG_DIR, BROWSERS_DIR,
 )
 from data_loader import InspectionData, InspectionItem
@@ -47,12 +47,20 @@ POPUP_DISMISS_SELECTORS = [
 
 
 class AutomationEngine:
-    def __init__(self, log_callback: Optional[Callable[[str], None]] = None):
+    def __init__(
+        self,
+        log_callback: Optional[Callable[[str], None]] = None,
+        force_headless: Optional[bool] = None,
+        allow_manual_login: bool = True,
+    ):
         self.playwright = None
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
         self.log_callback = log_callback or (lambda msg: None)
+        self.force_headless = force_headless
+        self.allow_manual_login = allow_manual_login
+        self._browser_headless = BROWSER_HEADLESS
         self._paused = False
         self._stopped = False
         self.item_errors: List[str] = []
@@ -62,10 +70,12 @@ class AutomationEngine:
 
     # ── Lifecycle ──
     def start_browser(self):
-        self._log("Launching browser...")
+        headless = self.force_headless if self.force_headless is not None else BROWSER_HEADLESS
+        self._browser_headless = bool(headless)
+        self._log(f"Launching browser... headless={self._browser_headless}")
         self.playwright = sync_playwright().start()
         self.browser = self.playwright.chromium.launch(
-            headless=BROWSER_HEADLESS, slow_mo=BROWSER_SLOW_MO,
+            headless=headless, slow_mo=BROWSER_SLOW_MO,
             args=["--start-maximized", "--force-device-scale-factor=1", "--disable-extensions"],
         )
         session_path = get_session_state_path()
@@ -160,6 +170,12 @@ class AutomationEngine:
                             save_session_state(self.page)
                             return
                         self._log("Auto-login failed.")
+
+        if not self.allow_manual_login or self._browser_headless:
+            raise RuntimeError(
+                "Auto-login failed and manual login is disabled/headless. "
+                "Open CheckPilot once, save SafetyCulture credentials/session, then retry."
+            )
 
         # Manual login fallback
         self._log("Please login manually in the browser (5 min timeout)...")
@@ -385,10 +401,10 @@ class AutomationEngine:
 
         # Get folder name from config
         acfg = load_autostart_config()
-        folder_name = acfg.get("template_folder_name", "")
+        folder_name = acfg.get("template_folder_name", "") or SC_TEMPLATE_FOLDER_NAME
 
         # If a direct folder URL is saved, use it
-        folder_url = acfg.get("template_folder_url", "").strip()
+        folder_url = acfg.get("template_folder_url", "").strip() or SC_TEMPLATE_FOLDER_URL
         if folder_url and "safetyculture.com" in folder_url:
             self._log(f"Navigating to saved folder URL...")
             self.page.goto(folder_url, timeout=30000)
@@ -425,7 +441,13 @@ class AutomationEngine:
                     pass
                 self._log(f"  Folder opened")
             else:
-                self._log(f"  WARNING: Folder '{folder_name}' not found, continuing on current page")
+                self._log(f"  ERROR: Template folder not found: '{folder_name}'")
+                self._log(f"  URL: {self.page.url}")
+                ss = self._screenshot_error("template_folder_not_found")
+                self._save_html_dump("template_folder_not_found")
+                raise RuntimeError(
+                    f"Template folder not found: '{folder_name}'. url='{self.page.url}', screenshot='{ss}'"
+                )
 
         self._log(f"  URL: {self.page.url}")
 
@@ -453,9 +475,11 @@ class AutomationEngine:
             time.sleep(2)
 
         if not tmpl or tmpl.count() == 0:
+            self._log(f"  ERROR: Template not found: '{template_name}'")
+            self._log(f"  URL: {self.page.url}")
             ss = self._screenshot_error("template_not_found")
             self._save_html_dump("template_not_found")
-            raise RuntimeError(f"Template not found: '{template_name}'")
+            raise RuntimeError(f"Template not found: '{template_name}'. url='{self.page.url}', screenshot='{ss}'")
 
         # Scroll template into view
         tmpl.scroll_into_view_if_needed()
@@ -471,7 +495,11 @@ class AutomationEngine:
 
         start_btn = None
         if row.count() > 0:
-            start_btn = row.locator('a:has-text("Start"), button:has-text("Start"), a:has-text("Start inspection")').first
+            start_btn = row.locator(
+                'a:has-text("Start"), button:has-text("Start"), '
+                'a:has-text("Start inspection"), button:has-text("Start inspection"), '
+                'a:has-text("New inspection"), button:has-text("New inspection")'
+            ).first
 
         clicked = False
         if start_btn and start_btn.count() > 0:
@@ -490,13 +518,17 @@ class AutomationEngine:
             start_sels = [
                 'button:has-text("Start inspection")',
                 'a:has-text("Start inspection")',
+                'button:has-text("New inspection")',
+                'a:has-text("New inspection")',
                 'button:has-text("Start")',
                 'button:has-text("Begin")',
             ]
             if not self._click_first_found(start_sels, timeout=8000):
+                self._log(f"  ERROR: Start/New inspection button not found for '{template_name}'")
+                self._log(f"  URL: {self.page.url}")
                 ss = self._screenshot_error("no_start_button")
                 self._save_html_dump("no_start_button")
-                raise RuntimeError(f"Cannot find Start button for '{template_name}'")
+                raise RuntimeError(f"Cannot find Start/New inspection button for '{template_name}'. url='{self.page.url}', screenshot='{ss}'")
             self._log("  Clicked Start inspection (after template click)")
 
         # Wait for inspection form to load
@@ -507,6 +539,14 @@ class AutomationEngine:
             pass
 
         self._log(f"  Form URL: {self.page.url}")
+        if not self._is_inspection_form_open(template_name):
+            self._log(f"  ERROR: Inspection form did not open for '{template_name}'")
+            self._log(f"  URL: {self.page.url}")
+            ss = self._screenshot_error("inspection_form_not_open")
+            self._save_html_dump("inspection_form_not_open")
+            raise RuntimeError(
+                f"Inspection form did not open for '{template_name}'. url='{self.page.url}', screenshot='{ss}'"
+            )
         self._log("Form opened")
 
     def _is_inspection_form_open(self, template_name: str) -> bool:
@@ -575,8 +615,10 @@ class AutomationEngine:
             # Special command: navigate to next page
             if item.answer.strip().upper() == "NEXTPAGE" or item.question.strip().upper() == "NEXTPAGE":
                 self._log(f"  [{idx+1}/{total}] >>> Next Page")
-                self._go_next_page()
-                self._items_ok += 1
+                if self._go_next_page():
+                    self._items_ok += 1
+                else:
+                    self.item_errors.append("Next page button not found")
                 continue
 
             if item.section and item.section != current_section:
@@ -949,10 +991,8 @@ class AutomationEngine:
                     time.sleep(0.3)
                     self._log(f"    Dropdown selected (partial): {value}")
                     return True
-                # Press Enter as fallback
-                self.page.keyboard.press("Enter")
-                time.sleep(0.3)
-                return True
+                self._log(f"    WARN: Dropdown option not found: {value}")
+                return False
             except:
                 pass
 
@@ -987,9 +1027,8 @@ class AutomationEngine:
                         option2.click()
                         time.sleep(0.3)
                         return True
-                    self.page.keyboard.press("Enter")
-                    time.sleep(0.3)
-                    return True
+                    self._log(f"    WARN: Dropdown option not found after typing: {value}")
+                    return False
                 except:
                     continue
         return False
@@ -1099,7 +1138,7 @@ class AutomationEngine:
                 return c
         return q_el.locator("xpath=../..")
 
-    def _go_next_page(self):
+    def _go_next_page(self) -> bool:
         """Click Next/Continue button to go to next page of the inspection form."""
         next_sels = [
             'button:has-text("Next")',
@@ -1118,8 +1157,10 @@ class AutomationEngine:
             except:
                 pass
             self._log("    Page navigated")
+            return True
         else:
             self._log("    WARN: Next page button not found")
+            return False
 
     def _add_note(self, item: InspectionItem):
         nb = self._find_first(['button:has-text("Add note")', 'button:has-text("Note")',

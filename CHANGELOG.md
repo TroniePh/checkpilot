@@ -1,5 +1,15 @@
 # Changelog — CheckPilot™
 
+## v2.4.8 (2026-05-25)
+
+- Added headless runner for Windows Task Scheduler boot/pre-login operation.
+- Added persistent validation fingerprint so edited CSV/Excel files must be revalidated.
+- Hardened Auto Mode submit guards for missing template/folder/start button/form and uncertain dropdown answers.
+- Added light UI tone and clearer Windows startup settings.
+- Updated release metadata and customer documentation.
+
+---
+
 ## v2.2.0 (2026-05-25)
 
 ### New Features

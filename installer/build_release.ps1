@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $Root
 
-$Version = "2.4.7"
+$Version = "2.4.8"
 $Python = Join-Path $Root "venv\Scripts\python.exe"
 if (-not (Test-Path $Python)) {
     $Python = "python"
@@ -13,7 +13,9 @@ Write-Host "== CheckPilot commercial build =="
 Write-Host "Root: $Root"
 
 Write-Host "[1/5] Compile check"
-$pyFiles = Get-ChildItem -Path $Root -Filter "*.py" -Recurse | Where-Object { $_.FullName -notmatch "venv|__pycache__|\.browsers" } | ForEach-Object { $_.FullName }
+$pyFiles = Get-ChildItem -Path $Root -Filter "*.py" -Recurse | Where-Object {
+    $_.FullName -notmatch "venv|__pycache__|\.browsers|\\build\\|\\dist\\|\\release_v"
+} | ForEach-Object { $_.FullName }
 foreach ($f in $pyFiles) { & $Python -m py_compile $f }
 
 Write-Host "[2/5] Ensure PyInstaller"
@@ -30,13 +32,19 @@ Remove-Item -Recurse -Force "build", "dist\CheckPilot" -ErrorAction SilentlyCont
     --icon "assets\icon.ico" `
     --add-data "assets;assets" `
     --add-data "sample_data.csv;." `
+    --add-data "version.json;." `
+    --add-data "yummi_sushi_data.csv;." `
+    --add-data "YUMMI SAFETY CULTURE;YUMMI SAFETY CULTURE" `
     --add-data ".browsers;.browsers" `
     --hidden-import "PIL._tkinter_finder" `
     main.py
 
 Write-Host "[4/5] Add client handoff files"
 Copy-Item "README.md" "dist\CheckPilot\README.md" -Force
+Copy-Item "HUONG_DAN_SU_DUNG.md" "dist\CheckPilot\HUONG_DAN_SU_DUNG.md" -Force
 Copy-Item "sample_data.csv" "dist\CheckPilot\sample_data.csv" -Force
+Copy-Item "version.json" "dist\CheckPilot\version.json" -Force
+Copy-Item "yummi_sushi_data.csv" "dist\CheckPilot\yummi_sushi_data.csv" -Force
 
 Write-Host "[5/5] Build installer"
 $IsccPath = $null

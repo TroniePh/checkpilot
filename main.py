@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 
 def main():
     """Launch the application."""
+    if "--runner" in sys.argv:
+        from runner import main as runner_main
+        runner_args = [arg for arg in sys.argv[1:] if arg != "--runner"]
+        raise SystemExit(runner_main(runner_args))
+
     logger.info("CheckPilot starting...")
 
     # Single instance check

@@ -41,9 +41,11 @@ from autostart import (
     save_last_config, get_last_data_file, get_last_image_folder,
     load_autostart_config, save_autostart_config,
     register_windows_startup, is_registered_startup,
+    register_prelogin_task, is_prelogin_task_registered,
+    build_validation_state, save_validation_state, is_validation_current,
 )
 
-ctk.set_appearance_mode("dark")
+ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
 
 # â”€â”€ Palette â”€â”€
@@ -83,7 +85,6 @@ class App(ctk.CTk):
         self.tray: Optional[TrayIcon] = None
         self._data_file = ""
         self._image_folder = ""
-        self._validation_state = None
         self._scheduled_run = False
         self._run_errors = []
         self._full_inspections = None
@@ -94,6 +95,7 @@ class App(ctk.CTk):
         _acfg = load_autostart_config()
         self.fv.set(_acfg.get("last_data_file", ""))
         self.iv.set(_acfg.get("last_image_folder", ""))
+        self._validation_state = _acfg.get("validation_state") or None
 
         self.protocol("WM_DELETE_WINDOW", self._to_tray)
         init_default_admin()
@@ -606,15 +608,37 @@ class App(ctk.CTk):
         self.win_startup_enabled = ctk.BooleanVar(value=is_registered_startup())
         ctk.CTkCheckBox(
             startup_row,
-            text="Khởi động CheckPilot cùng Windows",
+            text="Mở app sau khi user login",
             variable=self.win_startup_enabled,
             font=ctk.CTkFont(family=F, size=10),
             text_color=DIM,
             border_color=BORDER,
             checkmark_color=TEAL,
         ).pack(side="left", padx=(0,10))
+
+        startup_row2 = ctk.CTkFrame(c_startup, fg_color="transparent")
+        startup_row2.pack(fill="x", padx=12, pady=(0,6))
+        self.prelogin_task_enabled = ctk.BooleanVar(value=is_prelogin_task_registered())
+        ctk.CTkCheckBox(
+            startup_row2,
+            text="Runner nền trước login (headless)",
+            variable=self.prelogin_task_enabled,
+            font=ctk.CTkFont(family=F, size=10),
+            text_color=DIM,
+            border_color=BORDER,
+            checkmark_color=TEAL,
+        ).pack(side="left", padx=(0,10))
+        ctk.CTkLabel(
+            startup_row2,
+            text="Dùng Task Scheduler, cần session/credentials SafetyCulture đã lưu.",
+            font=ctk.CTkFont(family=F, size=9),
+            text_color=MUTED,
+        ).pack(side="left")
+
+        startup_save_row = ctk.CTkFrame(c_startup, fg_color="transparent")
+        startup_save_row.pack(fill="x", padx=12, pady=(0,10))
         ctk.CTkButton(
-            startup_row,
+            startup_save_row,
             text="Lưu",
             width=55,
             height=28,
@@ -848,14 +872,10 @@ class App(ctk.CTk):
                 report["ok"] = False
                 self.load_lbl.configure(text="Chưa chấp nhận ảnh thiếu", text_color=AMBER)
                 self._log("  Dừng vì có ảnh không tìm thấy")
-        self._validation_state = {
-            "file": fp,
-            "image_folder": img,
-            "ok": bool(report["ok"]),
-            "missing_images": missing_images,
-            "missing_accepted": missing_accepted,
-            "validated_at": datetime.now().isoformat(),
-        }
+        self._validation_state = build_validation_state(
+            fp, img, bool(report["ok"]), missing_images, missing_accepted
+        )
+        save_validation_state(self._validation_state)
         self._save_current_settings()
         if report["ok"]:
             self.load_lbl.configure(text="Dữ liệu hợp lệ", text_color=GREEN)
@@ -865,14 +885,7 @@ class App(ctk.CTk):
     def _has_validated_current_file(self):
         fp = self.fv.get().strip()
         img = self.iv.get().strip()
-        state = self._validation_state or {}
-        if state.get("file") != fp or state.get("image_folder") != img:
-            return False
-        if not state.get("ok"):
-            return False
-        if state.get("missing_images", 0) and not state.get("missing_accepted"):
-            return False
-        return True
+        return is_validation_current(fp, img, self._validation_state or {})
 
     def _ensure_validated_before_start(self, allow_prompt=True):
         """Validate the current CSV/Excel before any run starts."""
@@ -898,14 +911,8 @@ class App(ctk.CTk):
             self.load_lbl.configure(text=f"{len(report['errors'])} lỗi", text_color=RED)
             for e in report["errors"]:
                 self._log(f"Validate failed: {e}")
-            self._validation_state = {
-                "file": fp,
-                "image_folder": img,
-                "ok": False,
-                "missing_images": missing_images,
-                "missing_accepted": False,
-                "validated_at": datetime.now().isoformat(),
-            }
+            self._validation_state = build_validation_state(fp, img, False, missing_images, False)
+            save_validation_state(self._validation_state)
             return False
 
         if missing_images:
@@ -922,14 +929,8 @@ class App(ctk.CTk):
                 self._log("Validate failed: người dùng không tiếp tục khi thiếu ảnh")
                 return False
 
-        self._validation_state = {
-            "file": fp,
-            "image_folder": img,
-            "ok": True,
-            "missing_images": missing_images,
-            "missing_accepted": missing_accepted,
-            "validated_at": datetime.now().isoformat(),
-        }
+        self._validation_state = build_validation_state(fp, img, True, missing_images, missing_accepted)
+        save_validation_state(self._validation_state)
         self._save_current_settings()
         return True
 
@@ -1498,10 +1499,25 @@ class App(ctk.CTk):
     def _save_windows_startup(self):
         try:
             register_windows_startup(self.win_startup_enabled.get())
-            if self.win_startup_enabled.get():
-                messagebox.showinfo("OK", "Đã bật khởi động cùng Windows")
-            else:
-                messagebox.showinfo("OK", "Đã tắt khởi động cùng Windows")
+            prelogin_msg = ""
+            if hasattr(self, "prelogin_task_enabled"):
+                ok, prelogin_msg = register_prelogin_task(self.prelogin_task_enabled.get())
+                if not ok:
+                    messagebox.showerror(
+                        "Task Scheduler",
+                        "Không tạo được runner trước login.\n\n"
+                        f"{prelogin_msg}\n\n"
+                        "Hãy chạy CheckPilot bằng quyền Administrator rồi thử lại."
+                    )
+                    return
+
+            parts = []
+            parts.append("Sau login: bật" if self.win_startup_enabled.get() else "Sau login: tắt")
+            if hasattr(self, "prelogin_task_enabled"):
+                parts.append("Trước login: bật" if self.prelogin_task_enabled.get() else "Trước login: tắt")
+            if prelogin_msg:
+                parts.append(prelogin_msg)
+            messagebox.showinfo("OK", "\n".join(parts))
         except Exception as e:
             messagebox.showerror("Error", f"Lỗi: {e}")
 

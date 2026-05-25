@@ -20,7 +20,7 @@ Từ lần sau mở app bằng shortcut CheckPilot trên Desktop hoặc Start Me
 Mở app lên sẽ thấy màn hình login.
 
 - User mặc định: `admin`
-- Pass mặc định: `admin`
+- Pass mặc định: `admin123`
 
 Lần đầu đăng nhập sẽ bắt đổi mật khẩu. Đổi xong đăng nhập lại bằng pass mới.
 
