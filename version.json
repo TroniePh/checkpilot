@@ -1,6 +1,6 @@
 {
-  "version": "2.5.1",
+  "version": "2.5.2",
   "release_date": "2026-05-25",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.5.1/CheckPilot_Setup_v2.5.1.exe",
-  "changelog": "v2.5.1: Fixed Automation layout so control buttons stay visible, improved selected-template Start matching, and blocked filling when SafetyCulture opens the wrong template."
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.5.2/CheckPilot_Setup_v2.5.2.exe",
+  "changelog": "v2.5.2: Replaced the always-visible CSV template list with a picker dialog, added Bỏ chọn, and fixed Chờ lịch so it waits for the scheduled time and then runs the full CSV in Auto Mode."
 }

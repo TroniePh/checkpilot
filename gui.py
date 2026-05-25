@@ -331,30 +331,47 @@ class App(ctk.CTk):
         self.load_lbl = ctk.CTkLabel(r3, text="", font=ctk.CTkFont(family=F, size=10))
         self.load_lbl.pack(side="left", padx=10)
 
-        list_hdr = ctk.CTkFrame(c1, fg_color="transparent")
-        list_hdr.pack(fill="x", padx=12, pady=(0, 3))
-        ctk.CTkLabel(
-            list_hdr,
-            text="Template / inspection trong CSV",
-            font=ctk.CTkFont(family=F, size=10, weight="bold"),
-            text_color=DIM,
-        ).pack(side="left")
-        self.selected_insp_lbl = ctk.CTkLabel(
-            list_hdr,
-            text="",
-            font=ctk.CTkFont(family=F, size=9),
-            text_color=MUTED,
-        )
-        self.selected_insp_lbl.pack(side="right")
-        self.inspection_list_frame = ctk.CTkScrollableFrame(
-            c1,
-            height=72,
-            fg_color=BG,
-            corner_radius=7,
+        picker_row = ctk.CTkFrame(c1, fg_color="transparent")
+        picker_row.pack(fill="x", padx=12, pady=(0, 10))
+        self.template_picker_btn = ctk.CTkButton(
+            picker_row,
+            text="Mục template CSV",
+            width=130,
+            height=30,
+            corner_radius=6,
+            fg_color="transparent",
+            hover_color=ELEVATED,
             border_width=1,
             border_color=BORDER,
+            text_color=DIM,
+            font=ctk.CTkFont(family=F, size=10),
+            state="disabled",
+            command=self._open_inspection_picker,
         )
-        self.inspection_list_frame.pack(fill="x", padx=12, pady=(0, 10))
+        self.template_picker_btn.pack(side="left", padx=(0, 8))
+        self.selected_insp_lbl = ctk.CTkLabel(
+            picker_row,
+            text="Chưa chọn mục test",
+            font=ctk.CTkFont(family=F, size=10),
+            text_color=MUTED,
+        )
+        self.selected_insp_lbl.pack(side="left", fill="x", expand=True)
+        self.clear_template_btn = ctk.CTkButton(
+            picker_row,
+            text="Bỏ chọn",
+            width=72,
+            height=30,
+            corner_radius=6,
+            fg_color="transparent",
+            hover_color=ELEVATED,
+            border_width=1,
+            border_color=BORDER,
+            text_color=DIM,
+            font=ctk.CTkFont(family=F, size=10),
+            state="disabled",
+            command=self._clear_inspection_selection,
+        )
+        self.clear_template_btn.pack(side="left")
         self._render_inspection_list()
 
         # Controls stay above optional settings so Start/Pause/Stop are always visible.
@@ -858,95 +875,198 @@ class App(ctk.CTk):
             self.after(0, lambda: self.run_stat_lbl.configure(text=text))
 
     def _render_inspection_list(self):
-        if not hasattr(self, "inspection_list_frame"):
-            return
-        for w in self.inspection_list_frame.winfo_children():
-            w.destroy()
-
         if not self.inspections:
-            ctk.CTkLabel(
-                self.inspection_list_frame,
-                text="Load file CSV/Excel để hiện danh sách test.",
-                font=ctk.CTkFont(family=F, size=10),
-                text_color=MUTED,
-            ).pack(anchor="w", padx=8, pady=8)
             if hasattr(self, "selected_insp_lbl"):
-                self.selected_insp_lbl.configure(text="")
+                self.selected_insp_lbl.configure(text="Load CSV/Excel để chọn mục test", text_color=MUTED)
+            if hasattr(self, "template_picker_btn"):
+                self.template_picker_btn.configure(state="disabled")
+            if hasattr(self, "clear_template_btn"):
+                self.clear_template_btn.configure(state="disabled")
             if hasattr(self, "btest"):
                 self.btest.configure(state="disabled")
             return
 
-        if self.selected_inspection_index is None or self.selected_inspection_index >= len(self.inspections):
-            self.selected_inspection_index = 0
+        if self.selected_inspection_index is not None and self.selected_inspection_index >= len(self.inspections):
+            self.selected_inspection_index = None
+
+        if hasattr(self, "template_picker_btn"):
+            self.template_picker_btn.configure(state="normal")
 
         selected = self.selected_inspection_index
         if hasattr(self, "selected_insp_lbl"):
-            self.selected_insp_lbl.configure(text=f"Đang chọn: {selected + 1}/{len(self.inspections)}")
+            if selected is None:
+                self.selected_insp_lbl.configure(
+                    text=f"Chưa chọn mục test | CSV có {len(self.inspections)} inspection",
+                    text_color=MUTED,
+                )
+            else:
+                insp = self.inspections[selected]
+                title = insp.template_name
+                if len(title) > 58:
+                    title = title[:55] + "..."
+                self.selected_insp_lbl.configure(
+                    text=f"Đang chọn test: {selected + 1}/{len(self.inspections)} - {title}",
+                    text_color=TEAL,
+                )
+        if hasattr(self, "clear_template_btn"):
+            self.clear_template_btn.configure(state="normal" if selected is not None else "disabled")
         if hasattr(self, "btest"):
-            self.btest.configure(state="normal")
+            self.btest.configure(state="normal" if selected is not None else "disabled")
 
-        for idx, insp in enumerate(self.inspections):
-            is_selected = idx == selected
-            row = ctk.CTkFrame(
-                self.inspection_list_frame,
-                fg_color="#E6F4F1" if is_selected else "transparent",
-                corner_radius=5,
-                height=32,
-            )
-            row.pack(fill="x", padx=4, pady=2)
-            row.pack_propagate(False)
+    def _open_inspection_picker(self):
+        if not self.inspections:
+            self._load()
+            if not self.inspections:
+                messagebox.showwarning("", "Load dữ liệu trước")
+                return
 
-            title = f"{idx + 1}. {insp.template_name}"
-            if len(title) > 54:
-                title = title[:51] + "..."
-            ctk.CTkLabel(
-                row,
-                text=title,
-                width=330,
-                anchor="w",
-                font=ctk.CTkFont(family=F, size=10, weight="bold" if is_selected else "normal"),
-                text_color=TEAL if is_selected else TXT,
-            ).pack(side="left", padx=(8, 4))
+        pw = ctk.CTkToplevel(self)
+        pw.title("Chọn mục template CSV để test")
+        pw.geometry("820x520")
+        pw.resizable(True, True)
+        pw.configure(fg_color=BG)
+        pw.transient(self)
+        pw.grab_set()
+        pw.after(50, lambda: self._center_window(pw))
 
-            meta = f"{insp.site_location[:24]} | {len(insp.items)} câu"
-            ctk.CTkLabel(
-                row,
-                text=meta,
-                width=170,
-                anchor="w",
-                font=ctk.CTkFont(family=F, size=9),
-                text_color=MUTED,
-            ).pack(side="left", padx=(0, 4))
+        hdr = ctk.CTkFrame(pw, fg_color=CARD, corner_radius=8, border_width=1, border_color=BORDER)
+        hdr.pack(fill="x", padx=16, pady=(12, 8))
+        ctk.CTkLabel(
+            hdr,
+            text="Chọn 1 inspection để chạy Test Mode. Chờ lịch và Chạy ngay vẫn dùng toàn bộ CSV.",
+            font=ctk.CTkFont(family=F, size=11, weight="bold"),
+            text_color=TXT,
+        ).pack(anchor="w", padx=12, pady=(10, 2))
+        ctk.CTkLabel(
+            hdr,
+            text=f"Tổng: {len(self.inspections)} inspection | Test Mode sẽ không Complete/Submit.",
+            font=ctk.CTkFont(family=F, size=10),
+            text_color=MUTED,
+        ).pack(anchor="w", padx=12, pady=(0, 10))
 
-            ctk.CTkButton(
-                row,
-                text="Đã chọn" if is_selected else "Chọn",
-                width=62,
-                height=24,
-                corner_radius=5,
-                fg_color=TEAL if is_selected else "transparent",
-                hover_color=TEAL_H if is_selected else ELEVATED,
-                border_width=0 if is_selected else 1,
-                border_color=BORDER,
-                text_color="#FFFFFF" if is_selected else DIM,
-                font=ctk.CTkFont(family=F, size=9),
-                command=lambda i=idx: self._select_inspection(i),
-            ).pack(side="left", padx=(0, 4))
+        list_frame = ctk.CTkScrollableFrame(
+            pw,
+            fg_color=CARD,
+            corner_radius=8,
+            border_width=1,
+            border_color=BORDER,
+        )
+        list_frame.pack(fill="both", expand=True, padx=16, pady=(0, 8))
 
-            ctk.CTkButton(
-                row,
-                text="Test",
-                width=54,
-                height=24,
-                corner_radius=5,
-                fg_color="transparent",
-                hover_color=ELEVATED,
-                border_width=1,
-                border_color=TEAL,
-                text_color=TEAL,
-                font=ctk.CTkFont(family=F, size=9),
-                command=lambda i=idx: self._test_run_index(i),
-            ).pack(side="left")
+        def close_dialog():
+            pw.grab_release()
+            pw.destroy()
+
+        pw.protocol("WM_DELETE_WINDOW", close_dialog)
+
+        def select_and_refresh(idx):
+            self._select_inspection(idx)
+            render_rows()
+
+        def clear_and_refresh():
+            self._clear_inspection_selection()
+            render_rows()
+
+        def test_and_close(idx):
+            close_dialog()
+            self._test_run_index(idx)
+
+        def render_rows():
+            for child in list_frame.winfo_children():
+                child.destroy()
+            for idx, insp in enumerate(self.inspections):
+                is_selected = idx == self.selected_inspection_index
+                row = ctk.CTkFrame(
+                    list_frame,
+                    fg_color="#E6F4F1" if is_selected else "transparent",
+                    corner_radius=5,
+                    height=36,
+                )
+                row.pack(fill="x", padx=6, pady=3)
+                row.pack_propagate(False)
+
+                title = f"{idx + 1}. {insp.template_name}"
+                if len(title) > 64:
+                    title = title[:61] + "..."
+                ctk.CTkLabel(
+                    row,
+                    text=title,
+                    width=390,
+                    anchor="w",
+                    font=ctk.CTkFont(family=F, size=10, weight="bold" if is_selected else "normal"),
+                    text_color=TEAL if is_selected else TXT,
+                ).pack(side="left", padx=(10, 6))
+
+                meta = f"{insp.site_location[:28]} | {len(insp.items)} câu"
+                ctk.CTkLabel(
+                    row,
+                    text=meta,
+                    width=210,
+                    anchor="w",
+                    font=ctk.CTkFont(family=F, size=9),
+                    text_color=MUTED,
+                ).pack(side="left", padx=(0, 6))
+
+                select_cmd = clear_and_refresh if is_selected else (lambda i=idx: select_and_refresh(i))
+                ctk.CTkButton(
+                    row,
+                    text="Bỏ chọn" if is_selected else "Chọn",
+                    width=76,
+                    height=26,
+                    corner_radius=5,
+                    fg_color=TEAL if is_selected else "transparent",
+                    hover_color=TEAL_H if is_selected else ELEVATED,
+                    border_width=0 if is_selected else 1,
+                    border_color=BORDER,
+                    text_color="#FFFFFF" if is_selected else DIM,
+                    font=ctk.CTkFont(family=F, size=9),
+                    command=select_cmd,
+                ).pack(side="left", padx=(0, 6))
+
+                ctk.CTkButton(
+                    row,
+                    text="Test",
+                    width=58,
+                    height=26,
+                    corner_radius=5,
+                    fg_color="transparent",
+                    hover_color=ELEVATED,
+                    border_width=1,
+                    border_color=TEAL,
+                    text_color=TEAL,
+                    font=ctk.CTkFont(family=F, size=9),
+                    command=lambda i=idx: test_and_close(i),
+                ).pack(side="left")
+
+        render_rows()
+
+        btn_frame = ctk.CTkFrame(pw, fg_color="transparent")
+        btn_frame.pack(pady=(2, 12))
+        ctk.CTkButton(
+            btn_frame,
+            text="Bỏ chọn",
+            width=90,
+            height=32,
+            corner_radius=6,
+            fg_color="transparent",
+            hover_color=ELEVATED,
+            border_width=1,
+            border_color=BORDER,
+            text_color=DIM,
+            font=ctk.CTkFont(family=F, size=10),
+            command=clear_and_refresh,
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            btn_frame,
+            text="Đóng",
+            width=80,
+            height=32,
+            corner_radius=6,
+            fg_color=TEAL,
+            hover_color=TEAL_H,
+            font=ctk.CTkFont(family=F, size=10, weight="bold"),
+            command=close_dialog,
+        ).pack(side="left")
 
     def _select_inspection(self, idx: int):
         if idx < 0 or idx >= len(self.inspections):
@@ -954,6 +1074,11 @@ class App(ctk.CTk):
         self.selected_inspection_index = idx
         insp = self.inspections[idx]
         self._log(f"Đã chọn test: {idx + 1}. {insp.template_name} | {len(insp.items)} câu")
+        self._render_inspection_list()
+
+    def _clear_inspection_selection(self):
+        self.selected_inspection_index = None
+        self._log("Đã bỏ chọn mục test CSV")
         self._render_inspection_list()
 
     def _pick_f(self):
@@ -1079,8 +1204,8 @@ class App(ctk.CTk):
             self.inspections = load_data(fp, img)
             if self.adv.get():
                 for i in self.inspections: i.inspection_date = date.today().isoformat()
-            if self.selected_inspection_index is None or self.selected_inspection_index >= len(self.inspections):
-                self.selected_inspection_index = 0 if self.inspections else None
+            if self.selected_inspection_index is not None and self.selected_inspection_index >= len(self.inspections):
+                self.selected_inspection_index = None
             n, items = len(self.inspections), sum(len(i.items) for i in self.inspections)
             self.load_lbl.configure(text=f"{n} insp - {items} items", text_color=GREEN)
             self._log(f"Loaded {n} inspection(s), {items} items")
@@ -1103,7 +1228,9 @@ class App(ctk.CTk):
                 return
         idx = self.selected_inspection_index
         if idx is None or idx >= len(self.inspections):
-            idx = 0
+            messagebox.showwarning("", "Chọn mục template CSV để chạy test")
+            self._open_inspection_picker()
+            return
         self._test_run_index(idx)
 
     def _test_run_index(self, idx: int):
@@ -1131,7 +1258,10 @@ class App(ctk.CTk):
             messagebox.showwarning("", "Load dữ liệu trước")
             return
         if idx is None:
-            idx = self.selected_inspection_index if self.selected_inspection_index is not None else 0
+            idx = self.selected_inspection_index
+        if idx is None:
+            messagebox.showwarning("", "Chọn mục template CSV để chạy test")
+            return
         if idx < 0 or idx >= len(self.inspections):
             messagebox.showwarning("", "Mục test không hợp lệ")
             return
@@ -1251,6 +1381,10 @@ class App(ctk.CTk):
 
     def _run_now(self):
         """Run immediately — bypass schedule AND template lock."""
+        if getattr(self, "_full_inspections", None):
+            self.inspections = self._full_inspections
+            self._full_inspections = None
+            self._render_inspection_list()
         if not self.inspections:
             if self.fv.get().strip():
                 self._load()
@@ -1278,13 +1412,62 @@ class App(ctk.CTk):
 
     def _start_scheduled(self):
         """Activate scheduler mode — wait for scheduled time then auto-run."""
+        if self.worker_thread and self.worker_thread.is_alive():
+            self._log("Chờ lịch ignored: automation đang chạy")
+            return
+        if getattr(self, "_full_inspections", None):
+            self.inspections = self._full_inspections
+            self._full_inspections = None
+            self._render_inspection_list()
         if not self.inspections:
             if self.fv.get().strip():
                 self._load()
             if not self.inspections:
                 self._log("Chưa có dữ liệu. Load file trước.")
                 return
-        self._start(scheduled=False)
+        if not self._ensure_validated_before_start(allow_prompt=True):
+            return
+
+        cfg = load_schedule()
+        if not cfg.get("enabled"):
+            self._log("Chưa bật lịch hẹn. Vào tab Lịch hẹn, bật lịch và lưu giờ chạy trước.")
+            messagebox.showwarning("Lịch hẹn", "Chưa bật lịch hẹn. Vào tab Lịch hẹn, bật lịch và lưu giờ chạy trước.")
+            return
+
+        # Chờ lịch is always real Auto Mode for the full loaded CSV.
+        self.rv.set(False)
+        self.av.set(True)
+        self.sv.set(False)
+        self.adv.set(True)
+        self._save_current_settings()
+
+        due, scheduled_time, reason = is_schedule_due_now(cfg)
+        if due:
+            self._log(f"Đúng giờ lịch {scheduled_time}. Bắt đầu Auto Mode full CSV.")
+            mark_schedule_run(cfg, scheduled_time)
+            if self.scheduler:
+                self.scheduler.update_config(cfg)
+            self._start(scheduled=True)
+            return
+
+        self._ensure_scheduler_running(cfg)
+        self._log("Đã bật chế độ chờ lịch. Không chạy ngay.")
+        if reason == "already ran" and scheduled_time:
+            self._log(f"Lịch {scheduled_time} hôm nay đã chạy.")
+        target = get_next_run_datetime(cfg)
+        if target:
+            wait_text = target.strftime("%d/%m/%Y %H:%M")
+            self._log(f"Sẽ tự chạy full CSV vào: {wait_text}")
+            self.slbl.configure(text=f"Chờ lịch {target.strftime('%H:%M')}", text_color=AMBER)
+        else:
+            self._log("Không tìm được giờ chạy tiếp theo. Kiểm tra lại tab Lịch hẹn.")
+            self.slbl.configure(text="Chờ lịch", text_color=AMBER)
+        self._set_run_stats(len(self.inspections), 0, 0, 0)
+        if hasattr(self, "brun_now"):
+            self.brun_now.configure(state="normal")
+        self.bstart.configure(state="normal")
+        if hasattr(self, "btest"):
+            self.btest.configure(state="normal" if self.selected_inspection_index is not None else "disabled")
 
     def _start(self, scheduled=False):
         self._force_scheduled_start = False
@@ -1517,6 +1700,10 @@ class App(ctk.CTk):
         self.after(0, self._start_scheduled_run)
 
     def _start_scheduled_run(self):
+        if getattr(self, "_full_inspections", None):
+            self.inspections = self._full_inspections
+            self._full_inspections = None
+            self._render_inspection_list()
         if not self.inspections and self.fv.get().strip():
             self._log("Scheduled: loading saved data file")
             self._load()
@@ -1536,8 +1723,8 @@ class App(ctk.CTk):
             self._render_inspection_list()
         if hasattr(self, 'brun_now'):
             self.brun_now.configure(state="normal")
-        if hasattr(self, 'btest') and self.inspections:
-            self.btest.configure(state="normal")
+        if hasattr(self, 'btest'):
+            self.btest.configure(state="normal" if self.inspections and self.selected_inspection_index is not None else "disabled")
         self.bstart.configure(state="normal")
         self.bpause.configure(state="disabled", text="Pause")
         self.bstop.configure(state="disabled")

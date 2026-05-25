@@ -1,5 +1,14 @@
 # Changelog — CheckPilot™
 
+## v2.5.2 (2026-05-25)
+
+- Replaced the always-visible CSV template list with a compact "Mục template CSV" picker dialog.
+- Added explicit "Bỏ chọn" support for the selected Test Mode template.
+- Fixed "Chờ lịch" so it waits for the scheduled time instead of starting immediately when Test Mode is enabled.
+- Scheduled runs now force real Auto Mode, use the full loaded CSV, and auto-submit according to the configured schedule.
+
+---
+
 ## v2.5.1 (2026-05-25)
 
 - Fixed Automation layout so run controls stay visible after the CSV template picker loads.
