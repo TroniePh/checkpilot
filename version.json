@@ -1,6 +1,6 @@
 {
-  "version": "2.4.9",
+  "version": "2.5.0",
   "release_date": "2026-05-25",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.4.9/CheckPilot_Setup_v2.4.9.exe",
-  "changelog": "v2.4.9: Fixed SafetyCulture question matching after page navigation, including required questions with split text/star markers, and improved Complete/Submit confirmation handling."
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.5.0/CheckPilot_Setup_v2.5.0.exe",
+  "changelog": "v2.5.0: Added CSV template/inspection picker for targeted Test Mode runs. Users can select one loaded template/site, answer only that inspection, and stop before Complete/Submit."
 }

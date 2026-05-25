@@ -88,6 +88,7 @@ class App(ctk.CTk):
         self._scheduled_run = False
         self._run_errors = []
         self._full_inspections = None
+        self.selected_inspection_index = None
 
         # Persistent StringVars (survive tab switches)
         self.fv = tk.StringVar()
@@ -322,12 +323,39 @@ class App(ctk.CTk):
         ctk.CTkButton(r3, text="Load", width=70, height=32, corner_radius=6,
                       fg_color="transparent", hover_color=ELEVATED, border_width=1, border_color=BORDER,
                       text_color=DIM, font=ctk.CTkFont(family=F, size=11), command=self._load).pack(side="left", padx=(0,6))
-        ctk.CTkButton(r3, text="Chạy thử 1 dòng", width=130, height=32, corner_radius=6,
+        self.btest = ctk.CTkButton(r3, text="Test mục đã chọn", width=130, height=32, corner_radius=6,
                       fg_color="transparent", hover_color=ELEVATED, border_width=1, border_color=BORDER,
                       text_color=DIM, font=ctk.CTkFont(family=F, size=11),
-                      command=self._test_run).pack(side="left")
+                      state="disabled", command=self._test_run)
+        self.btest.pack(side="left")
         self.load_lbl = ctk.CTkLabel(r3, text="", font=ctk.CTkFont(family=F, size=10))
         self.load_lbl.pack(side="left", padx=10)
+
+        list_hdr = ctk.CTkFrame(c1, fg_color="transparent")
+        list_hdr.pack(fill="x", padx=12, pady=(0, 3))
+        ctk.CTkLabel(
+            list_hdr,
+            text="Template / inspection trong CSV",
+            font=ctk.CTkFont(family=F, size=10, weight="bold"),
+            text_color=DIM,
+        ).pack(side="left")
+        self.selected_insp_lbl = ctk.CTkLabel(
+            list_hdr,
+            text="",
+            font=ctk.CTkFont(family=F, size=9),
+            text_color=MUTED,
+        )
+        self.selected_insp_lbl.pack(side="right")
+        self.inspection_list_frame = ctk.CTkScrollableFrame(
+            c1,
+            height=112,
+            fg_color=BG,
+            corner_radius=7,
+            border_width=1,
+            border_color=BORDER,
+        )
+        self.inspection_list_frame.pack(fill="x", padx=12, pady=(0, 10))
+        self._render_inspection_list()
 
         # Options
         c2 = self._card("Tùy chọn")
@@ -830,13 +858,119 @@ class App(ctk.CTk):
         if hasattr(self, "run_stat_lbl"):
             self.after(0, lambda: self.run_stat_lbl.configure(text=text))
 
+    def _render_inspection_list(self):
+        if not hasattr(self, "inspection_list_frame"):
+            return
+        for w in self.inspection_list_frame.winfo_children():
+            w.destroy()
+
+        if not self.inspections:
+            ctk.CTkLabel(
+                self.inspection_list_frame,
+                text="Load file CSV/Excel để hiện danh sách test.",
+                font=ctk.CTkFont(family=F, size=10),
+                text_color=MUTED,
+            ).pack(anchor="w", padx=8, pady=8)
+            if hasattr(self, "selected_insp_lbl"):
+                self.selected_insp_lbl.configure(text="")
+            if hasattr(self, "btest"):
+                self.btest.configure(state="disabled")
+            return
+
+        if self.selected_inspection_index is None or self.selected_inspection_index >= len(self.inspections):
+            self.selected_inspection_index = 0
+
+        selected = self.selected_inspection_index
+        if hasattr(self, "selected_insp_lbl"):
+            self.selected_insp_lbl.configure(text=f"Đang chọn: {selected + 1}/{len(self.inspections)}")
+        if hasattr(self, "btest"):
+            self.btest.configure(state="normal")
+
+        for idx, insp in enumerate(self.inspections):
+            is_selected = idx == selected
+            row = ctk.CTkFrame(
+                self.inspection_list_frame,
+                fg_color="#E6F4F1" if is_selected else "transparent",
+                corner_radius=5,
+                height=32,
+            )
+            row.pack(fill="x", padx=4, pady=2)
+            row.pack_propagate(False)
+
+            title = f"{idx + 1}. {insp.template_name}"
+            if len(title) > 54:
+                title = title[:51] + "..."
+            ctk.CTkLabel(
+                row,
+                text=title,
+                width=330,
+                anchor="w",
+                font=ctk.CTkFont(family=F, size=10, weight="bold" if is_selected else "normal"),
+                text_color=TEAL if is_selected else TXT,
+            ).pack(side="left", padx=(8, 4))
+
+            meta = f"{insp.site_location[:24]} | {len(insp.items)} câu"
+            ctk.CTkLabel(
+                row,
+                text=meta,
+                width=170,
+                anchor="w",
+                font=ctk.CTkFont(family=F, size=9),
+                text_color=MUTED,
+            ).pack(side="left", padx=(0, 4))
+
+            ctk.CTkButton(
+                row,
+                text="Đã chọn" if is_selected else "Chọn",
+                width=62,
+                height=24,
+                corner_radius=5,
+                fg_color=TEAL if is_selected else "transparent",
+                hover_color=TEAL_H if is_selected else ELEVATED,
+                border_width=0 if is_selected else 1,
+                border_color=BORDER,
+                text_color="#FFFFFF" if is_selected else DIM,
+                font=ctk.CTkFont(family=F, size=9),
+                command=lambda i=idx: self._select_inspection(i),
+            ).pack(side="left", padx=(0, 4))
+
+            ctk.CTkButton(
+                row,
+                text="Test",
+                width=54,
+                height=24,
+                corner_radius=5,
+                fg_color="transparent",
+                hover_color=ELEVATED,
+                border_width=1,
+                border_color=TEAL,
+                text_color=TEAL,
+                font=ctk.CTkFont(family=F, size=9),
+                command=lambda i=idx: self._test_run_index(i),
+            ).pack(side="left")
+
+    def _select_inspection(self, idx: int):
+        if idx < 0 or idx >= len(self.inspections):
+            return
+        self.selected_inspection_index = idx
+        insp = self.inspections[idx]
+        self._log(f"Đã chọn test: {idx + 1}. {insp.template_name} | {len(insp.items)} câu")
+        self._render_inspection_list()
+
     def _pick_f(self):
         p = filedialog.askopenfilename(filetypes=[("Excel/CSV","*.xlsx *.xls *.csv")])
         if p:
             self.fv.set(p)
             self._validation_state = None
+            self.selected_inspection_index = None
+            self.inspections = []
+            self._render_inspection_list()
             self._save_current_settings()
             self.bstart.configure(state="disabled")
+            if hasattr(self, "brun_now"):
+                self.brun_now.configure(state="disabled")
+            if hasattr(self, "btest"):
+                self.btest.configure(state="disabled")
     def _pick_d(self):
         p = filedialog.askdirectory()
         if p:
@@ -946,30 +1080,66 @@ class App(ctk.CTk):
             self.inspections = load_data(fp, img)
             if self.adv.get():
                 for i in self.inspections: i.inspection_date = date.today().isoformat()
+            if self.selected_inspection_index is None or self.selected_inspection_index >= len(self.inspections):
+                self.selected_inspection_index = 0 if self.inspections else None
             n, items = len(self.inspections), sum(len(i.items) for i in self.inspections)
             self.load_lbl.configure(text=f"{n} insp - {items} items", text_color=GREEN)
             self._log(f"Loaded {n} inspection(s), {items} items")
+            self._render_inspection_list()
             self.bstart.configure(state="normal")
             if hasattr(self, 'brun_now'):
                 self.brun_now.configure(state="normal")
+            if hasattr(self, 'btest'):
+                self.btest.configure(state="normal")
         except Exception as e:
             self.load_lbl.configure(text=str(e)[:40], text_color=RED)
+            self._render_inspection_list()
 
     def _test_run(self):
-        """Run only first inspection as a test - show preview first."""
+        """Run selected inspection as a test - show preview first."""
         if not self.inspections:
             self._load()
             if not self.inspections:
                 messagebox.showwarning("", "Load dữ liệu trước")
                 return
-        # Show preview dialog before running test
-        self._show_preview(self.inspections[0], on_confirm=self._execute_test_run)
+        idx = self.selected_inspection_index
+        if idx is None or idx >= len(self.inspections):
+            idx = 0
+        self._test_run_index(idx)
 
-    def _execute_test_run(self):
+    def _test_run_index(self, idx: int):
+        if not self.inspections:
+            self._load()
+            if not self.inspections:
+                messagebox.showwarning("", "Load dữ liệu trước")
+                return
+        if self.worker_thread and self.worker_thread.is_alive():
+            self._log("Đang chạy rồi!")
+            return
+        if idx < 0 or idx >= len(self.inspections):
+            messagebox.showwarning("", "Mục test không hợp lệ")
+            return
+        self.selected_inspection_index = idx
+        self._render_inspection_list()
+        self._show_preview(
+            self.inspections[idx],
+            on_confirm=lambda i=idx: self._execute_test_run(i),
+        )
+
+    def _execute_test_run(self, idx=None):
         """Actually run the test after preview confirmation."""
-        self._log("\nTEST RUN (1 inspection)")
+        if not self.inspections:
+            messagebox.showwarning("", "Load dữ liệu trước")
+            return
+        if idx is None:
+            idx = self.selected_inspection_index if self.selected_inspection_index is not None else 0
+        if idx < 0 or idx >= len(self.inspections):
+            messagebox.showwarning("", "Mục test không hợp lệ")
+            return
+        insp = self.inspections[idx]
+        self._log(f"\nTEST RUN ({idx + 1}/{len(self.inspections)}) - {insp.template_name}")
         self._full_inspections = list(self.inspections)
-        self.inspections = [self._full_inspections[0]]
+        self.inspections = [self._full_inspections[idx]]
         self.rv.set(True)  # Force test mode
         self.av.set(False)
         self.sv.set(False)
@@ -1098,6 +1268,8 @@ class App(ctk.CTk):
         self._bypass_template_lock = True  # Bypass lock for manual run
         self.brun_now.configure(state="disabled")
         self.bstart.configure(state="disabled")
+        if hasattr(self, "btest"):
+            self.btest.configure(state="disabled")
         self.bpause.configure(state="normal")
         self.bstop.configure(state="normal")
         self.slbl.configure(text="Đang chạy", text_color=TEAL)
@@ -1140,6 +1312,10 @@ class App(ctk.CTk):
                 self.scheduler.update_config(cfg)
         self._scheduled_run = effective_scheduled
         self.bstart.configure(state="disabled")
+        if hasattr(self, "brun_now"):
+            self.brun_now.configure(state="disabled")
+        if hasattr(self, "btest"):
+            self.btest.configure(state="disabled")
         self.bpause.configure(state="normal")
         self.bstop.configure(state="normal")
         self.slbl.configure(text="Đang chạy", text_color=TEAL)
@@ -1358,8 +1534,11 @@ class App(ctk.CTk):
         if hasattr(self, '_full_inspections') and self._full_inspections:
             self.inspections = self._full_inspections
             self._full_inspections = None
+            self._render_inspection_list()
         if hasattr(self, 'brun_now'):
             self.brun_now.configure(state="normal")
+        if hasattr(self, 'btest') and self.inspections:
+            self.btest.configure(state="normal")
         self.bstart.configure(state="normal")
         self.bpause.configure(state="disabled", text="Pause")
         self.bstop.configure(state="disabled")

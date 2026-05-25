@@ -1,5 +1,13 @@
 # Changelog — CheckPilot™
 
+## v2.5.0 (2026-05-25)
+
+- Added a CSV template/inspection picker in Automation after loading data.
+- Users can select a specific template/site from the loaded CSV and run Test Mode only for that item.
+- Targeted test runs always disable Auto Submit and stop before Complete/Submit.
+
+---
+
 ## v2.4.9 (2026-05-25)
 
 - Fixed SafetyCulture question matching after page navigation.
