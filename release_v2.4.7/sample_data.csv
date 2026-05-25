@@ -1,0 +1,21 @@
+site_location,inspection_date,template_name,section,question,answer,notes,image_path
+You Me Sushi Restaurant,2024-12-15,Food Quality Checklist,Food Storage,Are all food items stored at correct temperatures?,Yes,Checked all fridges,fridge_temp.jpg
+You Me Sushi Restaurant,2024-12-15,Food Quality Checklist,Food Storage,Are raw and cooked foods separated?,Yes,,
+You Me Sushi Restaurant,2024-12-15,Food Quality Checklist,Food Storage,Are all items properly labeled with dates?,Yes,All labels up to date,
+You Me Sushi Restaurant,2024-12-15,Food Quality Checklist,Food Storage,Are storage areas clean and organized?,Yes,,storage_area.jpg
+You Me Sushi Restaurant,2024-12-15,Food Quality Checklist,Food Preparation,Are preparation surfaces clean and sanitized?,Yes,Sanitized before shift,
+You Me Sushi Restaurant,2024-12-15,Food Quality Checklist,Food Preparation,Are staff wearing appropriate PPE?,Yes,,staff_ppe.jpg
+You Me Sushi Restaurant,2024-12-15,Food Quality Checklist,Food Preparation,Are cutting boards color-coded correctly?,Yes,,
+You Me Sushi Restaurant,2024-12-15,Food Quality Checklist,Food Preparation,Is sushi rice at correct temperature?,Yes,Rice at 20°C,rice_temp.jpg
+You Me Sushi Restaurant,2024-12-15,Food Quality Checklist,Fish Quality,Is fish fresh and within use-by date?,Yes,Delivered this morning,fish_delivery.jpg
+You Me Sushi Restaurant,2024-12-15,Food Quality Checklist,Fish Quality,Is fish stored at correct temperature (0-4°C)?,Yes,Fridge reading 2°C,
+You Me Sushi Restaurant,2024-12-15,Food Quality Checklist,Fish Quality,Are there any signs of discoloration or odor?,No,All fish looks fresh,
+You Me Sushi Restaurant,2024-12-15,Food Quality Checklist,Fish Quality,Is sashimi-grade fish properly identified?,Yes,,
+You Me Sushi Restaurant,2024-12-15,Food Quality Checklist,Hygiene & Cleanliness,Are handwashing stations stocked and accessible?,Yes,,handwash_station.jpg
+You Me Sushi Restaurant,2024-12-15,Food Quality Checklist,Hygiene & Cleanliness,Are floors clean and free of debris?,Yes,,
+You Me Sushi Restaurant,2024-12-15,Food Quality Checklist,Hygiene & Cleanliness,Are waste bins emptied regularly?,Yes,Emptied every 2 hours,
+You Me Sushi Restaurant,2024-12-15,Food Quality Checklist,Hygiene & Cleanliness,Is pest control up to date?,Yes,Last inspection 01/12,pest_control_cert.jpg
+You Me Sushi Restaurant,2024-12-15,Food Quality Checklist,Equipment,Are all refrigerators functioning properly?,Yes,All readings normal,
+You Me Sushi Restaurant,2024-12-15,Food Quality Checklist,Equipment,Are thermometers calibrated?,Yes,Calibrated this week,
+You Me Sushi Restaurant,2024-12-15,Food Quality Checklist,Equipment,Is dishwasher reaching correct temperature?,Yes,62°C wash confirmed,
+You Me Sushi Restaurant,2024-12-15,Food Quality Checklist,Equipment,Are knives clean and stored safely?,Yes,,

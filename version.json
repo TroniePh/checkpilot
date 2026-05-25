@@ -1,6 +1,6 @@
 {
-  "version": "2.2.0",
+  "version": "2.4.7",
   "release_date": "2026-05-25",
-  "download_url": "https://github.com/phamduy/checkpilot/releases/latest",
-  "changelog": "v2.2.0: Auto-login, scheduler, Telegram alerts, health check, retry, template lock, reports"
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/tag/v2.4.7",
+  "changelog": "v2.4.7: Fixed inspection flow (Inspections→Start→Search), auto-login Auth0, persistent log, singleton lock, run-now button"
 }

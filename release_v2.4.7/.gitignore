@@ -1,0 +1,30 @@
+# Virtual environment (local to project)
+venv/
+
+# Playwright browsers (local to project)
+.browsers/
+
+# App data
+data/
+screenshots/
+logs/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Build artifacts
+dist/
+build/
+release/
+*.spec
+
+# IDE
+.vscode/
+.idea/
+
+# Large files
+*.MP4
+*.mp4
+*.exe
