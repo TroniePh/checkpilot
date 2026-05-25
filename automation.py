@@ -1,4 +1,4 @@
-﻿"""
+"""
 CheckPilot - Automation Engine
 Features: Auto/Test mode, health check, error tracking, Telegram alerts, HTML dump
 """
