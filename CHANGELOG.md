@@ -1,5 +1,14 @@
 # Changelog — CheckPilot™
 
+## v2.4.9 (2026-05-25)
+
+- Fixed SafetyCulture question matching after page navigation.
+- Handles required questions rendered as split text or with leading `*`, for example `Did you Produce Hot Food Today?`.
+- Added retry/debug output for visible questions when matching still fails.
+- Improved Complete/Submit confirmation handling so hidden/stale modals do not block valid submit flow.
+
+---
+
 ## v2.4.8 (2026-05-25)
 
 - Added headless runner for Windows Task Scheduler boot/pre-login operation.

@@ -1,6 +1,6 @@
 {
-  "version": "2.4.8",
+  "version": "2.4.9",
   "release_date": "2026-05-25",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.4.8/CheckPilot_Setup_v2.4.8.exe",
-  "changelog": "v2.4.8: Added headless pre-login runner, stricter validation fingerprint, safer Auto Mode submit guards, light UI tone, and updated customer docs."
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.4.9/CheckPilot_Setup_v2.4.9.exe",
+  "changelog": "v2.4.9: Fixed SafetyCulture question matching after page navigation, including required questions with split text/star markers, and improved Complete/Submit confirmation handling."
 }

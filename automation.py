@@ -1103,40 +1103,183 @@ class AutomationEngine:
 
     def _find_question_container(self, question: str) -> Optional[Locator]:
         """Find the container element that wraps a question and its answer controls."""
-        # Try exact match first
-        q_el = self.page.locator(f'text="{question}"').first
-        if q_el.count() == 0:
-            # Try partial/case-insensitive match
-            short = question[:35].replace('"', '\\"')
-            q_el = self.page.locator(f'text=/{short}/i').first
-        if q_el.count() == 0:
-            # Try contains match for longer questions
-            words = question.split()[:5]
-            partial = " ".join(words)
-            q_el = self.page.locator(f'//*[contains(text(), "{partial}")]').first
-        if q_el.count() == 0:
-            return None
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            container = self._find_question_container_js(question)
+            if container:
+                return container
 
-        q_el.scroll_into_view_if_needed()
-        time.sleep(0.3)
+            q_el = None
+            # Try exact match first
+            try:
+                q_el = self.page.get_by_text(question, exact=True).first
+                if q_el.count() == 0:
+                    q_el = None
+            except:
+                q_el = None
 
-        # Walk up the DOM to find a meaningful container
-        container_selectors = [
-            'xpath=ancestor::*[contains(@class,"question")]',
-            'xpath=ancestor::*[contains(@class,"item")]',
-            'xpath=ancestor::*[contains(@class,"field")]',
-            'xpath=ancestor::*[contains(@class,"response")]',
-            'xpath=ancestor::*[@role="group"]',
-            'xpath=ancestor::*[contains(@class,"sc-")]',
-            'xpath=../../../..',
-            'xpath=../../..',
-            'xpath=../..',
-        ]
-        for sel in container_selectors:
-            c = q_el.locator(sel).first
-            if c.count() > 0:
-                return c
-        return q_el.locator("xpath=../..")
+            if not q_el:
+                try:
+                    short = re.escape(question[:45])
+                    q_el = self.page.locator(f'text=/{short}/i').first
+                    if q_el.count() == 0:
+                        q_el = None
+                except:
+                    q_el = None
+
+            if not q_el:
+                try:
+                    words = question.split()[:5]
+                    partial = " ".join(words).replace('"', '\\"')
+                    q_el = self.page.locator(f'//*[contains(normalize-space(.), "{partial}")]').first
+                    if q_el.count() == 0:
+                        q_el = None
+                except:
+                    q_el = None
+
+            if q_el:
+                try:
+                    q_el.scroll_into_view_if_needed()
+                    time.sleep(0.3)
+                    container_selectors = [
+                        'xpath=ancestor::*[contains(@class,"question")]',
+                        'xpath=ancestor::*[contains(@class,"item")]',
+                        'xpath=ancestor::*[contains(@class,"field")]',
+                        'xpath=ancestor::*[contains(@class,"response")]',
+                        'xpath=ancestor::*[@role="group"]',
+                        'xpath=ancestor::*[.//button or .//*[@role="button"] or .//input or .//textarea or .//select][1]',
+                        'xpath=../../../..',
+                        'xpath=../../..',
+                        'xpath=../..',
+                    ]
+                    for sel in container_selectors:
+                        c = q_el.locator(sel).first
+                        if c.count() > 0:
+                            return c
+                except:
+                    pass
+
+            time.sleep(0.5)
+        self._log(f"    DEBUG: visible questions: {self._visible_question_debug_texts()}")
+        return None
+
+    def _find_question_container_js(self, question: str) -> Optional[Locator]:
+        """
+        SafetyCulture often renders required questions as split text nodes,
+        for example "* Did you Produce Hot Food Today?". Text selectors can miss
+        those right after page navigation, so this browser-side matcher uses
+        normalized visible text and returns the smallest ancestor with controls.
+        """
+        try:
+            marker = self.page.evaluate(
+                """
+                (question) => {
+                    const normalize = (s) => (s || "")
+                        .replace(/\\s+/g, " ")
+                        .replace(/^\\*\\s*/, "")
+                        .trim()
+                        .toLowerCase();
+                    const compact = (s) => normalize(s).replace(/[^a-z0-9]+/g, "");
+                    const wanted = normalize(question);
+                    const wantedCompact = compact(question);
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.display !== "none" &&
+                            style.visibility !== "hidden" &&
+                            rect.width > 0 &&
+                            rect.height > 0 &&
+                            rect.bottom >= 0 &&
+                            rect.top <= window.innerHeight;
+                    };
+                    const textOf = (el) => normalize(el.innerText || el.textContent || "");
+                    const directTextOf = (el) => normalize(Array.from(el.childNodes)
+                        .filter((node) => node.nodeType === Node.TEXT_NODE)
+                        .map((node) => node.textContent)
+                        .join(" "));
+                    const hasControls = (el) => !!el.querySelector(
+                        "button,[role='button'],[role='radio'],input,textarea,select"
+                    );
+                    const matchesQuestion = (el) => {
+                        const values = [directTextOf(el), textOf(el)].filter(Boolean);
+                        return values.some((text) => {
+                            const textCompact = compact(text);
+                            return text === wanted ||
+                                text.includes(wanted) ||
+                                (wantedCompact.length >= 10 && textCompact.includes(wantedCompact));
+                        });
+                    };
+                    const selector = [
+                        "label", "span", "p", "div", "h1", "h2", "h3", "h4",
+                        "[data-testid]", "[role='heading']"
+                    ].join(",");
+                    let best = null;
+                    let bestArea = Number.MAX_SAFE_INTEGER;
+                    for (const node of Array.from(document.querySelectorAll(selector))) {
+                        if (!visible(node) || !matchesQuestion(node)) continue;
+                        let el = node;
+                        for (let depth = 0; depth < 8 && el; depth += 1, el = el.parentElement) {
+                            if (!visible(el) || !hasControls(el)) continue;
+                            const rect = el.getBoundingClientRect();
+                            const area = rect.width * rect.height;
+                            if (area <= 0 || area > 700000) continue;
+                            const text = textOf(el);
+                            if (!compact(text).includes(wantedCompact)) continue;
+                            if (area < bestArea) {
+                                best = el;
+                                bestArea = area;
+                            }
+                            break;
+                        }
+                    }
+                    if (!best) return "";
+                    const id = "cp-q-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+                    best.setAttribute("data-checkpilot-question-container", id);
+                    return id;
+                }
+                """,
+                question,
+            )
+            if not marker:
+                return None
+            loc = self.page.locator(f'[data-checkpilot-question-container="{marker}"]').first
+            if loc.count() > 0:
+                loc.scroll_into_view_if_needed()
+                time.sleep(0.2)
+                return loc
+        except Exception as e:
+            self._log(f"    DEBUG: JS question match failed: {str(e)[:50]}")
+        return None
+
+    def _visible_question_debug_texts(self) -> str:
+        try:
+            values = self.page.evaluate(
+                """
+                () => {
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.display !== "none" &&
+                            style.visibility !== "hidden" &&
+                            rect.width > 0 &&
+                            rect.height > 0 &&
+                            rect.bottom >= 0 &&
+                            rect.top <= window.innerHeight;
+                    };
+                    const normalize = (s) => (s || "").replace(/\\s+/g, " ").trim();
+                    return Array.from(document.querySelectorAll("label,span,p,div,h1,h2,h3,h4"))
+                        .filter(visible)
+                        .map((el) => normalize(el.innerText || el.textContent || ""))
+                        .filter((text) => text && text.length >= 8 && text.length <= 140)
+                        .filter((text) => /\\?|today|temp|calibration|produce|sanitize|check/i.test(text))
+                        .filter((text, index, arr) => arr.indexOf(text) === index)
+                        .slice(0, 8);
+                }
+                """
+            )
+            return " | ".join(values)
+        except:
+            return ""
 
     def _go_next_page(self) -> bool:
         """Click Next/Continue button to go to next page of the inspection form."""
@@ -1751,27 +1894,83 @@ class AutomationEngine:
             self._save_html_dump("complete_button_not_found")
             raise RuntimeError(f"Complete/Submit button not found. url='{self.page.url}', screenshot='{ss}'")
         time.sleep(2.0)
+
         # Confirm popup
-        dialog = self.page.locator('[role="dialog"], [class*="modal"]')
+        dialogs = self.page.locator('[role="dialog"]:visible, [class*="modal"]:visible')
         confirmed = False
-        if dialog.count() > 0:
-            for sel in ['button:has-text("Complete")', 'button:has-text("Confirm")',
-                        'button:has-text("Yes")', 'button:has-text("Submit")']:
-                btn = dialog.first.locator(sel).first
-                if btn.count() > 0:
-                    try:
-                        btn.click()
-                        confirmed = True
-                        break
-                    except: continue
+        confirm_sels = [
+            'button:has-text("Complete inspection")',
+            'button:has-text("Complete")',
+            'button:has-text("Confirm")',
+            'button:has-text("Submit")',
+            'button:has-text("Done")',
+            'button:has-text("OK")',
+            'button:has-text("Yes")',
+        ]
+        if dialogs.count() > 0:
+            for i in range(dialogs.count()):
+                dialog = dialogs.nth(i)
+                try:
+                    if not dialog.is_visible():
+                        continue
+                except:
+                    continue
+                for sel in confirm_sels:
+                    btn = dialog.locator(sel).first
+                    if btn.count() > 0:
+                        try:
+                            btn.scroll_into_view_if_needed()
+                            btn.click(timeout=5000)
+                            confirmed = True
+                            break
+                        except:
+                            continue
+                if confirmed:
+                    break
         else:
-            confirmed = self._click_first_found(['button:has-text("Confirm")', 'button:has-text("Complete")'], timeout=3000)
-        if dialog.count() > 0 and not confirmed:
+            confirmed = self._click_first_found(confirm_sels, timeout=3000)
+
+        # Some SafetyCulture flows submit immediately after the first Complete
+        # click, without a confirmation modal. Only block when a visible dialog
+        # remains and no confirmation button could be clicked.
+        if dialogs.count() > 0 and not confirmed:
+            self._log(f"  DEBUG: visible dialog buttons: {self._visible_dialog_button_texts()}")
             ss = self._screenshot_error("confirm_submit_button_not_found")
             self._save_html_dump("confirm_submit_button_not_found")
             raise RuntimeError(f"Confirm submit button not found. url='{self.page.url}', screenshot='{ss}'")
         time.sleep(PAGE_LOAD_WAIT)
-        self.page.wait_for_load_state("networkidle")
+        try:
+            self.page.wait_for_load_state("networkidle", timeout=15000)
+        except:
+            pass
+
+    def _visible_dialog_button_texts(self) -> str:
+        try:
+            values = self.page.evaluate(
+                """
+                () => {
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.display !== "none" &&
+                            style.visibility !== "hidden" &&
+                            rect.width > 0 &&
+                            rect.height > 0;
+                    };
+                    const dialogs = Array.from(document.querySelectorAll("[role='dialog'], [class*='modal']"))
+                        .filter(visible);
+                    const buttons = dialogs.flatMap((d) => Array.from(d.querySelectorAll("button,[role='button']")));
+                    return buttons
+                        .filter(visible)
+                        .map((b) => (b.innerText || b.getAttribute("aria-label") || "").replace(/\\s+/g, " ").trim())
+                        .filter(Boolean)
+                        .slice(0, 12);
+                }
+                """
+            )
+            return " | ".join(values)
+        except:
+            return ""
 
     def _scroll_to_section(self, name: str):
         el = self.page.locator(f'text="{name}"').first
