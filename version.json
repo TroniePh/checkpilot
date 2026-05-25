@@ -1,7 +1,6 @@
 {
-  "version": "2.4.7",
-  "update_type": "full",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.4.7/CheckPilot_Setup_v2.4.7.exe",
-  "changelog": "- Fix upload anh: bao ve question scope, retry 5 lan, fallback file input\n- Cai tien dropdown: bo qua dropdown khi cau hoi la so (khong treo 33s)\n- Settings: luu CSV/folder/template URL, Telegram nhieu chat ID, autostart Windows",
-  "mandatory": true
+  "version": "2.2.0",
+  "release_date": "2026-05-25",
+  "download_url": "https://github.com/phamduy/checkpilot/releases/latest",
+  "changelog": "v2.2.0: Auto-login, scheduler, Telegram alerts, health check, retry, template lock, reports"
 }

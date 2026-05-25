@@ -1,0 +1,83 @@
+name: Build & Release CheckPilot
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Install Playwright browsers
+        run: playwright install chromium
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: .browsers
+
+      - name: Build EXE
+        run: |
+          pyinstaller --onefile --windowed --name CheckPilot ^
+            --add-data "assets;assets" ^
+            --add-data "sample_data.csv;." ^
+            --add-data "version.json;." ^
+            --add-data ".browsers;.browsers" ^
+            --icon assets/icon.ico ^
+            main.py
+
+      - name: Create ZIP release
+        run: |
+          mkdir release
+          copy dist\CheckPilot.exe release\
+          copy sample_data.csv release\
+          copy version.json release\
+          copy README.md release\
+          copy CHANGELOG.md release\
+          copy setup.bat release\
+          Compress-Archive -Path release\* -DestinationPath CheckPilot-v${{ github.ref_name }}-windows.zip
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v1
+        with:
+          files: CheckPilot-v${{ github.ref_name }}-windows.zip
+          body_path: CHANGELOG.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-portable:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create portable ZIP (source + setup)
+        run: |
+          mkdir portable
+          xcopy /E /I /Y *.py portable\
+          xcopy /E /I /Y assets portable\assets\
+          copy requirements.txt portable\
+          copy sample_data.csv portable\
+          copy version.json portable\
+          copy setup.bat portable\
+          copy setup.sh portable\
+          copy README.md portable\
+          copy CHANGELOG.md portable\
+          copy .gitignore portable\
+          Compress-Archive -Path portable\* -DestinationPath CheckPilot-v${{ github.ref_name }}-portable.zip
+
+      - name: Upload Portable
+        uses: softprops/action-gh-release@v1
+        with:
+          files: CheckPilot-v${{ github.ref_name }}-portable.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

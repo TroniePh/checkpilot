@@ -29,13 +29,21 @@ from notifier import (
 )
 from runlock import is_already_run_today, mark_completed, get_remaining, reset_today
 from template_lock import is_template_tested, mark_template_tested, get_untested_templates
-from scheduler import Scheduler, load_schedule, save_schedule
+from scheduler import (
+    Scheduler, load_schedule, save_schedule,
+    get_next_run_datetime, is_schedule_due_now, mark_schedule_run,
+)
 from history import add_record, get_records, get_stats, export_csv
 from reporter import generate_report
 from tray import TrayIcon
 from config import BASE_DIR
+from autostart import (
+    save_last_config, get_last_data_file, get_last_image_folder,
+    load_autostart_config, save_autostart_config,
+    register_windows_startup, is_registered_startup,
+)
 
-ctk.set_appearance_mode("light")
+ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
 # â”€â”€ Palette â”€â”€
@@ -83,6 +91,9 @@ class App(ctk.CTk):
         # Persistent StringVars (survive tab switches)
         self.fv = tk.StringVar()
         self.iv = tk.StringVar()
+        _acfg = load_autostart_config()
+        self.fv.set(_acfg.get("last_data_file", ""))
+        self.iv.set(_acfg.get("last_image_folder", ""))
 
         self.protocol("WM_DELETE_WINDOW", self._to_tray)
         init_default_admin()
@@ -254,6 +265,9 @@ class App(ctk.CTk):
             self.scheduler.start()
         self._pg_auto()
 
+        # Auto-load last used config
+        self.after(500, self._auto_load_last_config)
+
         # Auto-check for updates on startup (silent, non-blocking)
         self.after(2000, self._startup_update_check)
 
@@ -336,21 +350,26 @@ class App(ctk.CTk):
         # Controls
         c3 = self._card("Điều khiển")
         cr = ctk.CTkFrame(c3, fg_color="transparent"); cr.pack(fill="x", padx=12, pady=8)
-        self.bstart = ctk.CTkButton(cr, text="Start", width=100, height=36, corner_radius=7,
-                                     fg_color=TEAL, hover_color=TEAL_H, state="disabled",
-                                     font=ctk.CTkFont(family=F, size=12, weight="bold"), command=self._start)
+        self.brun_now = ctk.CTkButton(cr, text="Chạy ngay", width=100, height=36, corner_radius=7,
+                                       fg_color="#0F766E", hover_color="#115E59", state="disabled",
+                                       font=ctk.CTkFont(family=F, size=12, weight="bold"), command=self._run_now)
+        self.brun_now.pack(side="left", padx=(0,5))
+        self.bstart = ctk.CTkButton(cr, text="Chờ lịch", width=90, height=36, corner_radius=7,
+                                     fg_color="transparent", hover_color=ELEVATED,
+                                     border_width=1, border_color=TEAL, text_color=TEAL, state="disabled",
+                                     font=ctk.CTkFont(family=F, size=11), command=self._start_scheduled)
         self.bstart.pack(side="left", padx=(0,5))
-        self.bpause = ctk.CTkButton(cr, text="Pause", width=90, height=36, corner_radius=7,
+        self.bpause = ctk.CTkButton(cr, text="Pause", width=80, height=36, corner_radius=7,
                                      fg_color="transparent", hover_color=ELEVATED,
                                      border_width=1, border_color=BORDER, text_color=DIM,
                                      state="disabled", font=ctk.CTkFont(family=F, size=11), command=self._pause)
         self.bpause.pack(side="left", padx=(0,5))
-        self.bstop = ctk.CTkButton(cr, text="Stop", width=90, height=36, corner_radius=7,
+        self.bstop = ctk.CTkButton(cr, text="Stop", width=80, height=36, corner_radius=7,
                                     fg_color="transparent", hover_color=ELEVATED,
                                     border_width=1, border_color=BORDER, text_color=RED,
                                     state="disabled", font=ctk.CTkFont(family=F, size=11), command=self._stop)
         self.bstop.pack(side="left", padx=(0,6))
-        ctk.CTkButton(cr, text="Retry failed", width=90, height=36, corner_radius=7,
+        ctk.CTkButton(cr, text="Retry", width=70, height=36, corner_radius=7,
                       fg_color="transparent", border_width=1, border_color=BORDER,
                       hover_color=ELEVATED, text_color=DIM,
                       font=ctk.CTkFont(family=F, size=10), command=self._retry_failed).pack(side="left", padx=(0,12))
@@ -547,6 +566,65 @@ class App(ctk.CTk):
                       fg_color=TEAL, hover_color=TEAL_H, font=ctk.CTkFont(family=F, size=10, weight="bold"),
                       command=self._act_lic).pack(side="left")
 
+        # Template folder
+        c_tpl = self._card("Templates")
+        ctk.CTkLabel(
+            c_tpl,
+            text="Để trống nếu dùng trang Templates mặc định.",
+            font=ctk.CTkFont(family=F, size=10),
+            text_color=MUTED,
+        ).pack(anchor="w", padx=12, pady=(0,6))
+        tpl_row = ctk.CTkFrame(c_tpl, fg_color="transparent"); tpl_row.pack(fill="x", padx=12, pady=(0,10))
+        self.tpl_url = ctk.CTkEntry(
+            tpl_row,
+            placeholder_text="Template folder URL",
+            width=420,
+            height=32,
+            corner_radius=6,
+            border_color=BORDER,
+        )
+        self.tpl_url.pack(side="left", padx=(0,5))
+        saved_tpl_url = load_autostart_config().get("template_folder_url", "")
+        if saved_tpl_url:
+            self.tpl_url.insert(0, saved_tpl_url)
+        ctk.CTkButton(
+            tpl_row,
+            text="Lưu",
+            width=55,
+            height=32,
+            corner_radius=6,
+            fg_color=TEAL,
+            hover_color=TEAL_H,
+            font=ctk.CTkFont(family=F, size=10),
+            command=self._save_template_url,
+        ).pack(side="left")
+
+        # Windows startup
+        c_startup = self._card("Windows")
+        startup_row = ctk.CTkFrame(c_startup, fg_color="transparent")
+        startup_row.pack(fill="x", padx=12, pady=(0,10))
+        self.win_startup_enabled = ctk.BooleanVar(value=is_registered_startup())
+        ctk.CTkCheckBox(
+            startup_row,
+            text="Khởi động CheckPilot cùng Windows",
+            variable=self.win_startup_enabled,
+            font=ctk.CTkFont(family=F, size=10),
+            text_color=DIM,
+            border_color=BORDER,
+            checkmark_color=TEAL,
+        ).pack(side="left", padx=(0,10))
+        ctk.CTkButton(
+            startup_row,
+            text="Lưu",
+            width=55,
+            height=28,
+            corner_radius=5,
+            fg_color=TEAL,
+            hover_color=TEAL_H,
+            font=ctk.CTkFont(family=F, size=10),
+            command=self._save_windows_startup,
+        ).pack(side="left")
+
         # Telegram
         c3 = self._card("Telegram Alerts")
         tg_cfg = load_telegram_config()
@@ -564,12 +642,14 @@ class App(ctk.CTk):
         if tg_cfg.get("bot_token"): self.tg_token.insert(0, tg_cfg["bot_token"])
 
         tr2 = ctk.CTkFrame(c3, fg_color="transparent"); tr2.pack(fill="x", padx=12, pady=2)
-        ctk.CTkLabel(tr2, text="Chat ID:", width=75, anchor="w", font=ctk.CTkFont(family=F, size=10),
+        ctk.CTkLabel(tr2, text="Chat IDs:", width=75, anchor="w", font=ctk.CTkFont(family=F, size=10),
                      text_color=DIM).pack(side="left")
-        self.tg_chat = ctk.CTkEntry(tr2, width=200, height=30, corner_radius=6, border_color=BORDER,
+        self.tg_chat = ctk.CTkEntry(tr2, width=320, height=30, corner_radius=6, border_color=BORDER,
+                                     placeholder_text="Nhiều Chat ID: cách nhau bằng dấu phẩy",
                                      font=ctk.CTkFont(family=F, size=10))
         self.tg_chat.pack(side="left", padx=4)
-        if tg_cfg.get("chat_id"): self.tg_chat.insert(0, tg_cfg["chat_id"])
+        chat_ids = tg_cfg.get("chat_ids") or ([tg_cfg.get("chat_id")] if tg_cfg.get("chat_id") else [])
+        if chat_ids: self.tg_chat.insert(0, ", ".join(chat_ids))
 
         tr3 = ctk.CTkFrame(c3, fg_color="transparent"); tr3.pack(fill="x", padx=12, pady=(6,10))
         self.tg_enabled = ctk.BooleanVar(value=tg_cfg.get("enabled", False))
@@ -731,12 +811,14 @@ class App(ctk.CTk):
         if p:
             self.fv.set(p)
             self._validation_state = None
+            self._save_current_settings()
             self.bstart.configure(state="disabled")
     def _pick_d(self):
         p = filedialog.askdirectory()
         if p:
             self.iv.set(p)
             self._validation_state = None
+            self._save_current_settings()
             self.bstart.configure(state="disabled")
 
     def _validate(self):
@@ -774,6 +856,7 @@ class App(ctk.CTk):
             "missing_accepted": missing_accepted,
             "validated_at": datetime.now().isoformat(),
         }
+        self._save_current_settings()
         if report["ok"]:
             self.load_lbl.configure(text="Dữ liệu hợp lệ", text_color=GREEN)
             self._log("  OK - sẵn sàng chạy")
@@ -847,6 +930,7 @@ class App(ctk.CTk):
             "missing_accepted": missing_accepted,
             "validated_at": datetime.now().isoformat(),
         }
+        self._save_current_settings()
         return True
 
     def _load(self):
@@ -857,6 +941,7 @@ class App(ctk.CTk):
             self._data_file = fp
             img = self.iv.get().strip()
             self._image_folder = img
+            self._save_current_settings()
             self.inspections = load_data(fp, img)
             if self.adv.get():
                 for i in self.inspections: i.inspection_date = date.today().isoformat()
@@ -864,6 +949,8 @@ class App(ctk.CTk):
             self.load_lbl.configure(text=f"{n} insp - {items} items", text_color=GREEN)
             self._log(f"Loaded {n} inspection(s), {items} items")
             self.bstart.configure(state="normal")
+            if hasattr(self, 'brun_now'):
+                self.brun_now.configure(state="normal")
         except Exception as e:
             self.load_lbl.configure(text=str(e)[:40], text_color=RED)
 
@@ -992,11 +1079,23 @@ class App(ctk.CTk):
         w, h = window.winfo_width(), window.winfo_height()
         window.geometry(f"+{pw - w // 2}+{ph - h // 2}")
 
-    def _start(self, scheduled=False):
-        if not self.inspections: return
-        if not self._ensure_validated_before_start(allow_prompt=not scheduled):
+    def _run_now(self):
+        """Run immediately — bypass schedule AND template lock."""
+        if not self.inspections:
+            if self.fv.get().strip():
+                self._load()
+            if not self.inspections:
+                self._log("Chưa có dữ liệu. Load file trước.")
+                return
+        if self.worker_thread and self.worker_thread.is_alive():
+            self._log("Đang chạy rồi!")
             return
-        self._scheduled_run = scheduled
+        if not self._ensure_validated_before_start(allow_prompt=True):
+            return
+        self._log("\n=== CHẠY NGAY ===")
+        self._scheduled_run = False
+        self._bypass_template_lock = True  # Bypass lock for manual run
+        self.brun_now.configure(state="disabled")
         self.bstart.configure(state="disabled")
         self.bpause.configure(state="normal")
         self.bstop.configure(state="normal")
@@ -1004,6 +1103,86 @@ class App(ctk.CTk):
         self._run_errors = []
         self.worker_thread = threading.Thread(target=self._run, daemon=True)
         self.worker_thread.start()
+
+    def _start_scheduled(self):
+        """Activate scheduler mode — wait for scheduled time then auto-run."""
+        if not self.inspections:
+            if self.fv.get().strip():
+                self._load()
+            if not self.inspections:
+                self._log("Chưa có dữ liệu. Load file trước.")
+                return
+        self._start(scheduled=False)
+
+    def _start(self, scheduled=False):
+        self._force_scheduled_start = False
+        self._schedule_slot_to_mark = ""
+        if not self.inspections:
+            if self.fv.get().strip():
+                self._load()
+            if not self.inspections:
+                self._log("Start cancelled: chưa có dữ liệu")
+                return
+        if self.worker_thread and self.worker_thread.is_alive():
+            self._log("Start ignored: automation đang chạy")
+            return
+        auto_submit = bool(self.av.get()) and not bool(self.rv.get()) if hasattr(self, "av") and hasattr(self, "rv") else False
+        if not scheduled and auto_submit and self._should_wait_for_schedule():
+            return
+        effective_scheduled = scheduled or bool(getattr(self, "_force_scheduled_start", False))
+        if not self._ensure_validated_before_start(allow_prompt=not effective_scheduled):
+            return
+        if self._schedule_slot_to_mark:
+            cfg = load_schedule()
+            mark_schedule_run(cfg, self._schedule_slot_to_mark)
+            if self.scheduler:
+                self.scheduler.update_config(cfg)
+        self._scheduled_run = effective_scheduled
+        self.bstart.configure(state="disabled")
+        self.bpause.configure(state="normal")
+        self.bstop.configure(state="normal")
+        self.slbl.configure(text="Đang chạy", text_color=TEAL)
+        self._run_errors = []
+        self.worker_thread = threading.Thread(target=self._run, daemon=True)
+        self.worker_thread.start()
+
+    def _should_wait_for_schedule(self) -> bool:
+        """Manual Auto Mode respects the enabled scheduler instead of running early."""
+        cfg = load_schedule()
+        if not cfg.get("enabled"):
+            return False
+
+        due, scheduled_time, reason = is_schedule_due_now(cfg)
+        if due:
+            self._log(f"Đúng giờ lịch {scheduled_time}. Bắt đầu Auto Mode.")
+            self._force_scheduled_start = True
+            self._schedule_slot_to_mark = scheduled_time
+            return False
+
+        if reason == "already ran":
+            self._log(f"Lịch {scheduled_time} hôm nay đã chạy. Chuyển sang chờ lịch tiếp theo.")
+        else:
+            self._log("Chưa tới giờ lịch. Không chạy ngay, chuyển sang chế độ chờ.")
+
+        self._ensure_scheduler_running(cfg)
+        target = get_next_run_datetime(cfg)
+        if target:
+            wait_text = target.strftime("%d/%m/%Y %H:%M")
+            self._log(f"Sẽ tự chạy vào: {wait_text}")
+            self.slbl.configure(text=f"Chờ lịch {target.strftime('%H:%M')}", text_color=AMBER)
+        else:
+            self._log("Không tìm được giờ chạy tiếp theo. Kiểm tra lại lịch hẹn.")
+            self.slbl.configure(text="Chờ lịch", text_color=AMBER)
+        self._save_current_settings()
+        return True
+
+    def _ensure_scheduler_running(self, cfg=None):
+        cfg = cfg or load_schedule()
+        if not self.scheduler:
+            self.scheduler = Scheduler(run_callback=self._sched_run, log_callback=self._log)
+        self.scheduler.update_config(cfg)
+        if cfg.get("enabled") and not self.scheduler.is_running():
+            self.scheduler.start()
 
     def _pause(self):
         if not self.engine: return
@@ -1021,6 +1200,7 @@ class App(ctk.CTk):
     def _run(self):
         self.engine = AutomationEngine(log_callback=self._log)
         total = 0
+        skipped_count = 0
         run_success = 0
         run_failed = 0
         try:
@@ -1032,8 +1212,12 @@ class App(ctk.CTk):
             hc_ok, hc_msg = self.engine.health_check()
             if not hc_ok:
                 self._log(f"Health check FAILED: {hc_msg}")
-                from notifier import send_error_alert
-                send_error_alert(f"Health check failed: {hc_msg}")
+                screenshot = None
+                try:
+                    screenshot = self.engine._screenshot_error("health_check_failed")
+                except Exception:
+                    screenshot = None
+                send_error_alert(f"Health check failed: {hc_msg}", screenshot)
                 return
 
             self._log("Health check OK")
@@ -1041,8 +1225,9 @@ class App(ctk.CTk):
             # Filter already-completed today
             auto_submit = self.av.get() and not self.rv.get()
 
-            # Template lock: block auto-submit for untested templates
-            if auto_submit:
+            # Template lock: block auto-submit for untested templates (skip if manual "Chạy ngay")
+            bypass_lock = getattr(self, '_bypass_template_lock', False)
+            if auto_submit and not bypass_lock:
                 templates = list(set(i.template_name for i in self.inspections))
                 untested = get_untested_templates(templates)
                 if untested:
@@ -1051,12 +1236,13 @@ class App(ctk.CTk):
                         self._log(f"  - {t}")
                     self._log("Run in Test mode first, then retry in Auto mode.")
                     return
+            self._bypass_template_lock = False  # Reset
 
             if auto_submit:
                 remaining = get_remaining(self.inspections)
-                skipped = len(self.inspections) - len(remaining)
-                if skipped > 0:
-                    self._log(f"Skipping {skipped} already completed today")
+                skipped_count = len(self.inspections) - len(remaining)
+                if skipped_count > 0:
+                    self._log(f"Skipping {skipped_count} already completed today")
                 run_list = remaining
             else:
                 run_list = self.inspections
@@ -1074,20 +1260,23 @@ class App(ctk.CTk):
                 if self.engine._stopped: break
                 if self.adv.get(): insp.inspection_date = date.today().isoformat()
                 self._log(f"\n[{idx+1}/{total}] {insp.template_name} | {insp.site_location}")
+                run_started = datetime.now()
 
                 if auto_submit:
-                    self._log("  Mode: AUTO — submit if no errors")
+                    self._log("  Mode: AUTO - submit if no errors")
                 else:
-                    self._log("  Mode: TEST — fill only, no submit")
+                    self._log("  Mode: TEST - fill only, no submit")
 
                 ok = self.engine.run_inspection(insp, auto_submit=auto_submit)
                 errs = []
                 if ok:
                     if auto_submit:
-                        self.engine.verify_inspection_saved(insp.template_name)
+                        verified = self.engine.verify_inspection_saved(insp.template_name)
+                        if not verified:
+                            self._log("  Warning: submitted but not verified in list yet")
                         mark_completed(insp.template_name, insp.site_location)
                     else:
-                        # Test mode success → mark template as tested
+                        # Test mode success marks the template as tested.
                         mark_template_tested(insp.template_name, len(insp.items))
                         self._log(f"  Template '{insp.template_name}' marked as tested")
                     run_success += 1
@@ -1100,18 +1289,19 @@ class App(ctk.CTk):
                            len(insp.items), ok, errs, self._data_file)
 
                 # Generate report
-                import time as _t
                 mode = "auto" if auto_submit else "test"
-                items_ok = len(insp.items) - len(self.engine.item_errors)
                 img_total = sum(len(it.image_paths) for it in insp.items)
-                img_failed = sum(1 for e in self.engine.item_errors if "image" in e.lower() or "upload" in e.lower())
+                items_ok = getattr(self.engine, "_items_ok", max(0, len(insp.items) - len(self.engine.item_errors)))
+                img_failed = getattr(self.engine, "_images_failed", 0)
+                img_uploaded = getattr(self.engine, "_images_uploaded", max(0, img_total - img_failed))
+                duration_sec = (datetime.now() - run_started).total_seconds()
                 rpt = generate_report(
                     template=insp.template_name, site=insp.site_location,
                     inspection_date=insp.inspection_date, total_items=len(insp.items),
                     items_ok=items_ok, items_failed=len(self.engine.item_errors),
-                    errors=self.engine.item_errors, images_uploaded=img_total - img_failed,
+                    errors=self.engine.item_errors, images_uploaded=img_uploaded,
                     images_failed=img_failed, submitted=ok and auto_submit,
-                    mode=mode, duration_sec=0, data_file=self._data_file,
+                    mode=mode, duration_sec=duration_sec, data_file=self._data_file,
                 )
                 self._log(f"  Report: {os.path.basename(rpt)}")
 
@@ -1129,11 +1319,16 @@ class App(ctk.CTk):
         except Exception as e:
             self._log(f"Fatal: {e}")
             self._run_errors.append(str(e))
-            send_error_alert(str(e))
+            screenshot = None
+            try:
+                if self.engine:
+                    screenshot = self.engine._screenshot_error("gui_fatal")
+            except Exception:
+                screenshot = None
+            send_error_alert(str(e), screenshot)
         finally:
             # Send daily summary
             try:
-                skipped_count = max(0, len(self.inspections) - total)
                 send_daily_summary(
                     total=total, success=run_success,
                     failed=run_failed, skipped=skipped_count,
@@ -1143,10 +1338,18 @@ class App(ctk.CTk):
             self.after(0, self._done)
 
     def _sched_run(self):
+        self.after(0, self._start_scheduled_run)
+
+    def _start_scheduled_run(self):
+        if not self.inspections and self.fv.get().strip():
+            self._log("Scheduled: loading saved data file")
+            self._load()
         if not self.inspections:
-            self._log("Scheduled: no data loaded"); return
+            self._log("Scheduled: no data loaded")
+            return
         self.adv.set(True); self.rv.set(False); self.av.set(True); self.sv.set(False)
-        self.after(0, lambda: self._start(scheduled=True))
+        self._save_current_settings()
+        self._start(scheduled=True)
 
     def _done(self):
         self._scheduled_run = False
@@ -1154,6 +1357,8 @@ class App(ctk.CTk):
         if hasattr(self, '_full_inspections') and self._full_inspections:
             self.inspections = self._full_inspections
             self._full_inspections = None
+        if hasattr(self, 'brun_now'):
+            self.brun_now.configure(state="normal")
         self.bstart.configure(state="normal")
         self.bpause.configure(state="disabled", text="Pause")
         self.bstop.configure(state="disabled")
@@ -1207,6 +1412,26 @@ class App(ctk.CTk):
             messagebox.showinfo("OK", "Tắt lịch hẹn")
         self._pg_sched()
 
+    def _save_current_settings(self):
+        save_last_config(
+            data_file=self.fv.get().strip() if hasattr(self, "fv") else "",
+            image_folder=self.iv.get().strip() if hasattr(self, "iv") else "",
+        )
+
+    def _auto_load_last_config(self):
+        """Auto-load last used data file and image folder on startup."""
+        last_file = get_last_data_file()
+        last_img = get_last_image_folder()
+        if last_file and os.path.exists(last_file):
+            self.fv.set(last_file)
+            self._log(f"Auto-loaded file: {os.path.basename(last_file)}")
+        if last_img and os.path.exists(last_img):
+            self.iv.set(last_img)
+        # Auto-load data if file exists
+        if last_file and os.path.exists(last_file):
+            self._load()
+            self._log("Data auto-loaded from last session")
+
     def _export_history(self):
         p = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV","*.csv")])
         if p:
@@ -1247,13 +1472,38 @@ class App(ctk.CTk):
             messagebox.showerror("Error", msg)
 
     def _save_tg(self):
+        chat_ids = [
+            value.strip()
+            for value in self.tg_chat.get().replace("\n", ",").replace(";", ",").split(",")
+            if value.strip()
+        ]
         cfg = {
             "bot_token": self.tg_token.get().strip(),
-            "chat_id": self.tg_chat.get().strip(),
+            "chat_ids": chat_ids,
             "enabled": self.tg_enabled.get(),
         }
         save_telegram_config(cfg)
-        messagebox.showinfo("OK", "Telegram config saved")
+        messagebox.showinfo("OK", f"Telegram config saved ({len(chat_ids)} chat)")
+
+    def _save_template_url(self):
+        url = self.tpl_url.get().strip() if hasattr(self, "tpl_url") else ""
+        if url and "safetyculture.com" not in url:
+            messagebox.showwarning("URL", "URL phải là link SafetyCulture Templates hoặc để trống.")
+            return
+        cfg = load_autostart_config()
+        cfg["template_folder_url"] = url
+        save_autostart_config(cfg)
+        messagebox.showinfo("OK", "Đã lưu Template folder URL")
+
+    def _save_windows_startup(self):
+        try:
+            register_windows_startup(self.win_startup_enabled.get())
+            if self.win_startup_enabled.get():
+                messagebox.showinfo("OK", "Đã bật khởi động cùng Windows")
+            else:
+                messagebox.showinfo("OK", "Đã tắt khởi động cùng Windows")
+        except Exception as e:
+            messagebox.showerror("Error", f"Lỗi: {e}")
 
     def _test_tg(self):
         self._save_tg()
