@@ -1,6 +1,6 @@
 {
-  "version": "2.5.2",
-  "release_date": "2026-05-25",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.5.2/CheckPilot_Setup_v2.5.2.exe",
-  "changelog": "v2.5.2: Replaced the always-visible CSV template list with a picker dialog, added Bỏ chọn, and fixed Chờ lịch so it waits for the scheduled time and then runs the full CSV in Auto Mode."
+  "version": "2.5.3",
+  "release_date": "2026-05-26",
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.5.3/CheckPilot_Setup_v2.5.3.exe",
+  "changelog": "v2.5.3: Stabilized SafetyCulture automation retries, fixed photo upload targeting for sushi temperature and 9AM/5PM case photos, improved error reporting, and verified all 10 Yummi Sushi templates in live fill-only mode."
 }

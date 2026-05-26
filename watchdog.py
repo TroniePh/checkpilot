@@ -10,6 +10,7 @@ import threading
 import subprocess
 from datetime import datetime
 from config import DATA_DIR
+from run_state import load_run_state
 
 logger = logging.getLogger(__name__)
 HEARTBEAT_FILE = os.path.join(DATA_DIR, ".heartbeat")
@@ -61,11 +62,18 @@ class Watchdog:
     def _loop(self):
         while self._running:
             time.sleep(30)  # Check every 30s
-            # Auto-beat when app is alive (GUI running = app is fine)
-            beat()
+            state = load_run_state()
+            if state.get("status") != "running":
+                beat()
+                continue
             idle = get_last_beat()
             if idle > MAX_IDLE_SECONDS:
                 logger.warning(f"Watchdog: App idle for {idle:.0f}s")
+                if self.restart_callback:
+                    try:
+                        self.restart_callback()
+                    except Exception:
+                        logger.exception("Watchdog restart callback failed")
                 # Don't restart — just log. Opening a new instance causes duplicates.
                 break
 

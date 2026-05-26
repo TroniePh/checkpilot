@@ -61,6 +61,9 @@ App lưu lại file dữ liệu và thư mục ảnh đã chọn để Scheduler
 - Health check trước khi chạy automation.
 - Report HTML sau mỗi inspection.
 - Telegram alert nếu được cấu hình.
+- Nếu SafetyCulture hiện popup "An error has occurred", app bỏ draft lỗi và chạy lại đúng template đó tối đa 3 lần.
+- Telegram lỗi gửi thêm template, site, câu hỏi hiện tại, URL và các lỗi item gần nhất.
+- Auto Mode tự dừng sau 3 template lỗi liên tiếp để tránh submit/chạy sai hàng loạt khi website hoặc dữ liệu có vấn đề.
 
 ## Scheduler
 

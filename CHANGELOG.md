@@ -1,5 +1,17 @@
 # Changelog — CheckPilot™
 
+## v2.5.3 (unreleased)
+
+- Added same-template retry when SafetyCulture shows the transient "An error has occurred" popup.
+- Added safer draft cleanup after blocked/fatal automation errors so the next template starts from a clean page.
+- Added Telegram error context: template, site, current question, current URL, and recent item errors.
+- Added Auto Mode circuit breaker: GUI and headless runner stop after 3 consecutive template failures.
+- Fixed Yummi Sushi data so `sushi temperature.jpeg` targets the photo question instead of the initials field.
+- Fixed photo upload question resolution for 9AM/5PM case photos when CSV text differs from SafetyCulture's visible question text.
+- Verified live fill-only run: 10/10 Yummi Sushi templates completed with uploads, no submit.
+
+---
+
 ## v2.5.2 (2026-05-25)
 
 - Replaced the always-visible CSV template list with a compact "Mục template CSV" picker dialog.

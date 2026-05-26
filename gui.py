@@ -28,13 +28,24 @@ from notifier import (
     send_daily_summary, send_error_alert,
 )
 from runlock import is_already_run_today, mark_completed, get_remaining, reset_today
-from template_lock import is_template_tested, mark_template_tested, get_untested_templates
+from template_lock import (
+    fingerprint_inspection,
+    get_invalid_templates,
+    mark_template_tested,
+)
 from scheduler import (
     Scheduler, load_schedule, save_schedule,
     get_next_run_datetime, is_schedule_due_now, mark_schedule_run,
 )
 from history import add_record, get_records, get_stats, export_csv
 from reporter import generate_report
+from run_state import (
+    clear_run_state,
+    is_interrupted_auto_run,
+    load_run_state,
+    start_run_state,
+    update_run_state,
+)
 from tray import TrayIcon
 from config import BASE_DIR
 from autostart import (
@@ -63,6 +74,7 @@ AMBER = "#B45309"
 RED = "#B91C1C"
 RED_H = "#991B1B"
 F = "Segoe UI"
+MAX_CONSECUTIVE_FAILURES = 3
 
 
 class App(ctk.CTk):
@@ -89,6 +101,12 @@ class App(ctk.CTk):
         self._run_errors = []
         self._full_inspections = None
         self.selected_inspection_index = None
+        self._run_active = False
+        self._waiting_for_schedule = False
+        self._run_state_text = "Sẵn sàng"
+        self._run_state_color = TEAL
+        self._run_stats_text = "Tổng inspection: 0 | Đã chạy: 0 | Thành công: 0 | Lỗi: 0 | Còn lại: 0"
+        self._run_progress = 0.0
 
         # Persistent StringVars (survive tab switches)
         self.fv = tk.StringVar()
@@ -432,6 +450,7 @@ class App(ctk.CTk):
             text_color=AMBER,
         )
         self.auto_warn_lbl.pack(anchor="w", padx=12, pady=(0,8))
+        self._sync_run_controls()
 
     def _pg_history(self):
         self._cls()
@@ -857,61 +876,56 @@ class App(ctk.CTk):
         self._update_auto_submit_warning()
 
     def _update_auto_submit_warning(self):
-        if not hasattr(self, "auto_warn_lbl"):
+        if not self._live_widget("auto_warn_lbl"):
             return
         if self.rv.get() and self.av.get():
             self.av.set(False)
             return
         if self.av.get() and not self.rv.get():
-            self.auto_warn_lbl.configure(text="Auto mode sẽ tự Complete/Submit inspection.", text_color=AMBER)
+            self._safe_config("auto_warn_lbl", text="Auto mode sẽ tự Complete/Submit inspection.", text_color=AMBER)
         else:
-            self.auto_warn_lbl.configure(text="", text_color=MUTED)
+            self._safe_config("auto_warn_lbl", text="", text_color=MUTED)
 
     def _set_run_stats(self, total=0, done=0, success=0, failed=0):
         remaining = max(total - done, 0)
         text = f"Tổng inspection: {total} | Đã chạy: {done} | Thành công: {success} | Lỗi: {failed} | Còn lại: {remaining}"
+        self._run_stats_text = text
         self._log(text)
-        if hasattr(self, "run_stat_lbl"):
-            self.after(0, lambda: self.run_stat_lbl.configure(text=text))
+        self.after(0, lambda: self._safe_config("run_stat_lbl", text=text))
 
     def _render_inspection_list(self):
         if not self.inspections:
-            if hasattr(self, "selected_insp_lbl"):
-                self.selected_insp_lbl.configure(text="Load CSV/Excel để chọn mục test", text_color=MUTED)
-            if hasattr(self, "template_picker_btn"):
-                self.template_picker_btn.configure(state="disabled")
-            if hasattr(self, "clear_template_btn"):
-                self.clear_template_btn.configure(state="disabled")
-            if hasattr(self, "btest"):
-                self.btest.configure(state="disabled")
+            self._safe_config("selected_insp_lbl", text="Load CSV/Excel để chọn mục test", text_color=MUTED)
+            self._safe_config("template_picker_btn", state="disabled")
+            self._safe_config("clear_template_btn", state="disabled")
+            self._safe_config("btest", state="disabled")
+            self._sync_run_controls()
             return
 
         if self.selected_inspection_index is not None and self.selected_inspection_index >= len(self.inspections):
             self.selected_inspection_index = None
 
-        if hasattr(self, "template_picker_btn"):
-            self.template_picker_btn.configure(state="normal")
+        self._safe_config("template_picker_btn", state="normal")
 
         selected = self.selected_inspection_index
-        if hasattr(self, "selected_insp_lbl"):
-            if selected is None:
-                self.selected_insp_lbl.configure(
-                    text=f"Chưa chọn mục test | CSV có {len(self.inspections)} inspection",
-                    text_color=MUTED,
-                )
-            else:
-                insp = self.inspections[selected]
-                title = insp.template_name
-                if len(title) > 58:
-                    title = title[:55] + "..."
-                self.selected_insp_lbl.configure(
-                    text=f"Đang chọn test: {selected + 1}/{len(self.inspections)} - {title}",
-                    text_color=TEAL,
-                )
-        if hasattr(self, "clear_template_btn"):
-            self.clear_template_btn.configure(state="normal" if selected is not None else "disabled")
-        if hasattr(self, "btest"):
-            self.btest.configure(state="normal" if selected is not None else "disabled")
+        if selected is None:
+            self._safe_config(
+                "selected_insp_lbl",
+                text=f"Chưa chọn mục test | CSV có {len(self.inspections)} inspection",
+                text_color=MUTED,
+            )
+        else:
+            insp = self.inspections[selected]
+            title = insp.template_name
+            if len(title) > 58:
+                title = title[:55] + "..."
+            self._safe_config(
+                "selected_insp_lbl",
+                text=f"Đang chọn test: {selected + 1}/{len(self.inspections)} - {title}",
+                text_color=TEAL,
+            )
+        self._safe_config("clear_template_btn", state="normal" if selected is not None else "disabled")
+        self._sync_run_controls()
 
     def _open_inspection_picker(self):
         if not self.inspections:
@@ -1090,24 +1104,20 @@ class App(ctk.CTk):
             self.inspections = []
             self._render_inspection_list()
             self._save_current_settings()
-            self.bstart.configure(state="disabled")
-            if hasattr(self, "brun_now"):
-                self.brun_now.configure(state="disabled")
-            if hasattr(self, "btest"):
-                self.btest.configure(state="disabled")
+            self._sync_run_controls()
     def _pick_d(self):
         p = filedialog.askdirectory()
         if p:
             self.iv.set(p)
             self._validation_state = None
             self._save_current_settings()
-            self.bstart.configure(state="disabled")
+            self._sync_run_controls()
 
     def _validate(self):
         """Detailed data validation."""
         fp = self.fv.get().strip()
-        if not fp: self.load_lbl.configure(text="Chọn file", text_color=AMBER); return
-        if not os.path.exists(fp): self.load_lbl.configure(text="File không tồn tại", text_color=RED); return
+        if not fp: self._safe_config("load_lbl", text="Chọn file", text_color=AMBER); return
+        if not os.path.exists(fp): self._safe_config("load_lbl", text="File không tồn tại", text_color=RED); return
         img = self.iv.get().strip()
         report = validate_detailed(fp, img)
         self._log("--- Validate Report ---")
@@ -1115,7 +1125,7 @@ class App(ctk.CTk):
         self._log(f"  Rows: {s.get('total_rows',0)} | Templates: {s.get('templates',0)} | Sites: {s.get('sites',0)}")
         if s.get("images_total"): self._log(f"  Ảnh: {s['images_total']} tổng, {s.get('images_missing',0)} thiếu")
         if report["errors"]:
-            self.load_lbl.configure(text=f"{len(report['errors'])} lỗi", text_color=RED)
+            self._safe_config("load_lbl", text=f"{len(report['errors'])} lỗi", text_color=RED)
             for e in report["errors"]: self._log(f"  ERROR: {e}")
         if report["warnings"]:
             for w in report["warnings"]: self._log(f"  WARNING: {w}")
@@ -1128,7 +1138,7 @@ class App(ctk.CTk):
             )
             if not missing_accepted:
                 report["ok"] = False
-                self.load_lbl.configure(text="Chưa chấp nhận ảnh thiếu", text_color=AMBER)
+                self._safe_config("load_lbl", text="Chưa chấp nhận ảnh thiếu", text_color=AMBER)
                 self._log("  Dừng vì có ảnh không tìm thấy")
         self._validation_state = build_validation_state(
             fp, img, bool(report["ok"]), missing_images, missing_accepted
@@ -1136,7 +1146,7 @@ class App(ctk.CTk):
         save_validation_state(self._validation_state)
         self._save_current_settings()
         if report["ok"]:
-            self.load_lbl.configure(text="Dữ liệu hợp lệ", text_color=GREEN)
+            self._safe_config("load_lbl", text="Dữ liệu hợp lệ", text_color=GREEN)
             self._log("  OK - sẵn sàng chạy")
         self._log("-----------------------")
 
@@ -1152,11 +1162,11 @@ class App(ctk.CTk):
 
         fp = self.fv.get().strip()
         if not fp:
-            self.load_lbl.configure(text="Chọn file", text_color=AMBER)
+            self._safe_config("load_lbl", text="Chọn file", text_color=AMBER)
             self._log("Validate failed: chưa chọn file")
             return False
         if not os.path.exists(fp):
-            self.load_lbl.configure(text="File không tồn tại", text_color=RED)
+            self._safe_config("load_lbl", text="File không tồn tại", text_color=RED)
             self._log("Validate failed: file không tồn tại")
             return False
 
@@ -1166,7 +1176,7 @@ class App(ctk.CTk):
         missing_accepted = False
 
         if report["errors"]:
-            self.load_lbl.configure(text=f"{len(report['errors'])} lỗi", text_color=RED)
+            self._safe_config("load_lbl", text=f"{len(report['errors'])} lỗi", text_color=RED)
             for e in report["errors"]:
                 self._log(f"Validate failed: {e}")
             self._validation_state = build_validation_state(fp, img, False, missing_images, False)
@@ -1175,7 +1185,7 @@ class App(ctk.CTk):
 
         if missing_images:
             if not allow_prompt:
-                self.load_lbl.configure(text="Có ảnh không tìm thấy", text_color=AMBER)
+                self._safe_config("load_lbl", text="Có ảnh không tìm thấy", text_color=AMBER)
                 self._log("Validate failed: Có ảnh không tìm thấy. Cần Validate và xác nhận thủ công trước khi chạy lịch.")
                 return False
             missing_accepted = messagebox.askyesno(
@@ -1183,7 +1193,7 @@ class App(ctk.CTk):
                 "Có ảnh không tìm thấy. Bạn có muốn tiếp tục không?"
             )
             if not missing_accepted:
-                self.load_lbl.configure(text="Chưa chấp nhận ảnh thiếu", text_color=AMBER)
+                self._safe_config("load_lbl", text="Chưa chấp nhận ảnh thiếu", text_color=AMBER)
                 self._log("Validate failed: người dùng không tiếp tục khi thiếu ảnh")
                 return False
 
@@ -1194,8 +1204,8 @@ class App(ctk.CTk):
 
     def _load(self):
         fp = self.fv.get().strip()
-        if not fp: self.load_lbl.configure(text="Chọn file", text_color=AMBER); return
-        if not os.path.exists(fp): self.load_lbl.configure(text="Không tồn tại", text_color=RED); return
+        if not fp: self._safe_config("load_lbl", text="Chọn file", text_color=AMBER); return
+        if not os.path.exists(fp): self._safe_config("load_lbl", text="Không tồn tại", text_color=RED); return
         try:
             self._data_file = fp
             img = self.iv.get().strip()
@@ -1207,16 +1217,12 @@ class App(ctk.CTk):
             if self.selected_inspection_index is not None and self.selected_inspection_index >= len(self.inspections):
                 self.selected_inspection_index = None
             n, items = len(self.inspections), sum(len(i.items) for i in self.inspections)
-            self.load_lbl.configure(text=f"{n} insp - {items} items", text_color=GREEN)
+            self._safe_config("load_lbl", text=f"{n} insp - {items} items", text_color=GREEN)
             self._log(f"Loaded {n} inspection(s), {items} items")
             self._render_inspection_list()
-            self.bstart.configure(state="normal")
-            if hasattr(self, 'brun_now'):
-                self.brun_now.configure(state="normal")
-            if hasattr(self, 'btest'):
-                self.btest.configure(state="normal")
+            self._sync_run_controls()
         except Exception as e:
-            self.load_lbl.configure(text=str(e)[:40], text_color=RED)
+            self._safe_config("load_lbl", text=str(e)[:40], text_color=RED)
             self._render_inspection_list()
 
     def _test_run(self):
@@ -1380,7 +1386,7 @@ class App(ctk.CTk):
         window.geometry(f"+{pw - w // 2}+{ph - h // 2}")
 
     def _run_now(self):
-        """Run immediately — bypass schedule AND template lock."""
+        """Run immediately. Auto submit still requires tested/current templates."""
         if getattr(self, "_full_inspections", None):
             self.inspections = self._full_inspections
             self._full_inspections = None
@@ -1398,14 +1404,10 @@ class App(ctk.CTk):
             return
         self._log("\n=== CHẠY NGAY ===")
         self._scheduled_run = False
-        self._bypass_template_lock = True  # Bypass lock for manual run
-        self.brun_now.configure(state="disabled")
-        self.bstart.configure(state="disabled")
-        if hasattr(self, "btest"):
-            self.btest.configure(state="disabled")
-        self.bpause.configure(state="normal")
-        self.bstop.configure(state="normal")
-        self.slbl.configure(text="Đang chạy", text_color=TEAL)
+        self._waiting_for_schedule = False
+        self._run_active = True
+        self._set_run_status("Đang chạy", TEAL, 0)
+        self._sync_run_controls()
         self._run_errors = []
         self.worker_thread = threading.Thread(target=self._run, daemon=True)
         self.worker_thread.start()
@@ -1458,16 +1460,14 @@ class App(ctk.CTk):
         if target:
             wait_text = target.strftime("%d/%m/%Y %H:%M")
             self._log(f"Sẽ tự chạy full CSV vào: {wait_text}")
-            self.slbl.configure(text=f"Chờ lịch {target.strftime('%H:%M')}", text_color=AMBER)
+            self._waiting_for_schedule = True
+            self._set_run_status(f"Chờ lịch {target.strftime('%H:%M')}", AMBER)
         else:
             self._log("Không tìm được giờ chạy tiếp theo. Kiểm tra lại tab Lịch hẹn.")
-            self.slbl.configure(text="Chờ lịch", text_color=AMBER)
+            self._waiting_for_schedule = True
+            self._set_run_status("Chờ lịch", AMBER)
         self._set_run_stats(len(self.inspections), 0, 0, 0)
-        if hasattr(self, "brun_now"):
-            self.brun_now.configure(state="normal")
-        self.bstart.configure(state="normal")
-        if hasattr(self, "btest"):
-            self.btest.configure(state="normal" if self.selected_inspection_index is not None else "disabled")
+        self._sync_run_controls()
 
     def _start(self, scheduled=False):
         self._force_scheduled_start = False
@@ -1493,14 +1493,10 @@ class App(ctk.CTk):
             if self.scheduler:
                 self.scheduler.update_config(cfg)
         self._scheduled_run = effective_scheduled
-        self.bstart.configure(state="disabled")
-        if hasattr(self, "brun_now"):
-            self.brun_now.configure(state="disabled")
-        if hasattr(self, "btest"):
-            self.btest.configure(state="disabled")
-        self.bpause.configure(state="normal")
-        self.bstop.configure(state="normal")
-        self.slbl.configure(text="Đang chạy", text_color=TEAL)
+        self._waiting_for_schedule = False
+        self._run_active = True
+        self._set_run_status("Đang chạy", TEAL, 0)
+        self._sync_run_controls()
         self._run_errors = []
         self.worker_thread = threading.Thread(target=self._run, daemon=True)
         self.worker_thread.start()
@@ -1528,11 +1524,14 @@ class App(ctk.CTk):
         if target:
             wait_text = target.strftime("%d/%m/%Y %H:%M")
             self._log(f"Sẽ tự chạy vào: {wait_text}")
-            self.slbl.configure(text=f"Chờ lịch {target.strftime('%H:%M')}", text_color=AMBER)
+            self._waiting_for_schedule = True
+            self._set_run_status(f"Chờ lịch {target.strftime('%H:%M')}", AMBER)
         else:
             self._log("Không tìm được giờ chạy tiếp theo. Kiểm tra lại lịch hẹn.")
-            self.slbl.configure(text="Chờ lịch", text_color=AMBER)
+            self._waiting_for_schedule = True
+            self._set_run_status("Chờ lịch", AMBER)
         self._save_current_settings()
+        self._sync_run_controls()
         return True
 
     def _ensure_scheduler_running(self, cfg=None):
@@ -1546,15 +1545,17 @@ class App(ctk.CTk):
     def _pause(self):
         if not self.engine: return
         if self.engine._paused:
-            self.engine.resume(); self.bpause.configure(text="Pause")
-            self.slbl.configure(text="Đang chạy", text_color=TEAL)
+            self.engine.resume()
+            self._safe_config("bpause", text="Pause")
+            self._set_run_status("Đang chạy", TEAL)
         else:
-            self.engine.pause(); self.bpause.configure(text="Resume")
-            self.slbl.configure(text="Tạm dừng", text_color=AMBER)
+            self.engine.pause()
+            self._safe_config("bpause", text="Resume")
+            self._set_run_status("Tạm dừng", AMBER)
 
     def _stop(self):
         if self.engine: self.engine.stop()
-        self.slbl.configure(text="Stopping", text_color=RED)
+        self._set_run_status("Stopping", RED)
 
     def _run(self):
         self.engine = AutomationEngine(log_callback=self._log)
@@ -1562,6 +1563,16 @@ class App(ctk.CTk):
         skipped_count = 0
         run_success = 0
         run_failed = 0
+        consecutive_failures = 0
+        auto_submit = self.av.get() and not self.rv.get()
+        if auto_submit:
+            start_run_state(
+                data_file=self._data_file or self.fv.get().strip(),
+                image_folder=self._image_folder or self.iv.get().strip(),
+                total=len(self.inspections),
+                auto_submit=True,
+                scheduled=self._scheduled_run,
+            )
         try:
             self.engine.start_browser()
             self.engine.wait_for_login()
@@ -1581,21 +1592,15 @@ class App(ctk.CTk):
 
             self._log("Health check OK")
 
-            # Filter already-completed today
-            auto_submit = self.av.get() and not self.rv.get()
-
-            # Template lock: block auto-submit for untested templates (skip if manual "Chạy ngay")
-            bypass_lock = getattr(self, '_bypass_template_lock', False)
-            if auto_submit and not bypass_lock:
-                templates = list(set(i.template_name for i in self.inspections))
-                untested = get_untested_templates(templates)
-                if untested:
-                    self._log(f"BLOCKED: {len(untested)} untested template(s):")
-                    for t in untested:
+            # Template lock: every Auto submit requires tested/current templates.
+            if auto_submit:
+                invalid_templates = get_invalid_templates(self.inspections)
+                if invalid_templates:
+                    self._log(f"BLOCKED: {len(invalid_templates)} template(s) chưa test hoặc CSV đã đổi:")
+                    for t in invalid_templates:
                         self._log(f"  - {t}")
-                    self._log("Run in Test mode first, then retry in Auto mode.")
+                    self._log("Chạy Test mode lại cho các template này trước khi Auto submit.")
                     return
-            self._bypass_template_lock = False  # Reset
 
             if auto_submit:
                 remaining = get_remaining(self.inspections)
@@ -1619,6 +1624,16 @@ class App(ctk.CTk):
                 if self.engine._stopped: break
                 if self.adv.get(): insp.inspection_date = date.today().isoformat()
                 self._log(f"\n[{idx+1}/{total}] {insp.template_name} | {insp.site_location}")
+                if auto_submit:
+                    update_run_state(
+                        status="running",
+                        current_index=idx + 1,
+                        current_template=insp.template_name,
+                        total=total,
+                        done=idx,
+                        success=run_success,
+                        failed=run_failed,
+                    )
                 run_started = datetime.now()
 
                 if auto_submit:
@@ -1629,6 +1644,7 @@ class App(ctk.CTk):
                 ok = self.engine.run_inspection(insp, auto_submit=auto_submit)
                 errs = []
                 if ok:
+                    consecutive_failures = 0
                     if auto_submit:
                         verified = self.engine.verify_inspection_saved(insp.template_name)
                         if not verified:
@@ -1636,13 +1652,19 @@ class App(ctk.CTk):
                         mark_completed(insp.template_name, insp.site_location)
                     else:
                         # Test mode success marks the template as tested.
-                        mark_template_tested(insp.template_name, len(insp.items))
+                        mark_template_tested(
+                            insp.template_name,
+                            len(insp.items),
+                            fingerprint_inspection(insp),
+                        )
                         self._log(f"  Template '{insp.template_name}' marked as tested")
                     run_success += 1
                 else:
                     errs = self.engine.item_errors or [f"Failed: {insp.template_name}"]
                     self._run_errors.extend(errs)
                     run_failed += 1
+                    if auto_submit:
+                        consecutive_failures += 1
 
                 add_record(insp.template_name, insp.site_location, insp.inspection_date,
                            len(insp.items), ok, errs, self._data_file)
@@ -1665,14 +1687,43 @@ class App(ctk.CTk):
                 self._log(f"  Report: {os.path.basename(rpt)}")
 
                 self._set_run_stats(total, idx + 1, run_success, run_failed)
+                if auto_submit:
+                    update_run_state(
+                        status="running",
+                        current_index=idx + 1,
+                        current_template=insp.template_name,
+                        total=total,
+                        done=idx + 1,
+                        success=run_success,
+                        failed=run_failed,
+                    )
                 p = (idx+1)/total
-                self.after(0, lambda v=p: self.prog.set(v))
-                self.after(0, lambda i=idx: self.slbl.configure(text=f"{i+1}/{total}", text_color=GREEN))
+                self._set_run_status(f"{idx+1}/{total}", GREEN, p)
+
+                if auto_submit and consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                    msg = (
+                        f"Auto Mode stopped after {consecutive_failures} consecutive failures. "
+                        "No more inspections will run until this is checked."
+                    )
+                    self._log(msg)
+                    screenshot = None
+                    try:
+                        screenshot = self.engine._screenshot_error("consecutive_failures")
+                    except Exception:
+                        screenshot = None
+                    send_error_alert(
+                        msg, screenshot, insp.template_name, insp.site_location,
+                        question=getattr(self.engine, "current_question", ""),
+                        url=self.engine.page.url if self.engine and self.engine.page else "",
+                        details=self._run_errors[-8:],
+                    )
+                    update_run_state(status="blocked")
+                    break
 
                 if self.sv.get() and idx < total-1 and not self.engine._stopped:
                     self._log("  Waiting"); self.engine.pause()
-                    self.after(0, lambda: self.bpause.configure(text="Resume"))
-                    self.after(0, lambda: self.slbl.configure(text="Waiting", text_color=AMBER))
+                    self.after(0, lambda: self._safe_config("bpause", text="Resume"))
+                    self._set_run_status("Waiting", AMBER)
                     while self.engine._paused and not self.engine._stopped:
                         import time; time.sleep(0.5)
         except Exception as e:
@@ -1694,6 +1745,7 @@ class App(ctk.CTk):
                 )
             except: pass
             self.engine.close_browser()
+            clear_run_state()
             self.after(0, self._done)
 
     def _sched_run(self):
@@ -1716,22 +1768,19 @@ class App(ctk.CTk):
 
     def _done(self):
         self._scheduled_run = False
+        self._run_active = False
         # Restore full inspection list if was test/retry run
         if hasattr(self, '_full_inspections') and self._full_inspections:
             self.inspections = self._full_inspections
             self._full_inspections = None
             self._render_inspection_list()
-        if hasattr(self, 'brun_now'):
-            self.brun_now.configure(state="normal")
-        if hasattr(self, 'btest'):
-            self.btest.configure(state="normal" if self.inspections and self.selected_inspection_index is not None else "disabled")
-        self.bstart.configure(state="normal")
-        self.bpause.configure(state="disabled", text="Pause")
-        self.bstop.configure(state="disabled")
         if self._run_errors:
-            self.slbl.configure(text=f"Lỗi: {len(self._run_errors)}", text_color=RED)
+            self._run_state_text = f"Lỗi: {len(self._run_errors)}"
+            self._run_state_color = RED
         else:
-            self.slbl.configure(text="Hoàn tất", text_color=GREEN)
+            self._run_state_text = "Hoàn tất"
+            self._run_state_color = GREEN
+        self._sync_run_controls()
 
     def _retry_failed(self):
         """Retry only inspections that failed in the last run."""
@@ -1797,6 +1846,33 @@ class App(ctk.CTk):
         if last_file and os.path.exists(last_file):
             self._load()
             self._log("Data auto-loaded from last session")
+            self.after(1500, self._resume_interrupted_auto_run)
+
+    def _resume_interrupted_auto_run(self):
+        state = load_run_state()
+        data_file = self.fv.get().strip()
+        if not is_interrupted_auto_run(state, data_file):
+            if state and state.get("date") != date.today().isoformat():
+                clear_run_state()
+            return
+        if self._is_worker_running():
+            return
+        if not self.inspections:
+            self._load()
+        if not self.inspections:
+            return
+        self._log(
+            "Phát hiện Auto run bị gián đoạn. "
+            "Tự chạy tiếp các inspection còn lại, không chạy trùng mục đã submit."
+        )
+        if state.get("current_template"):
+            self._log(f"  Lần trước dừng ở: {state.get('current_template')}")
+        self.rv.set(False)
+        self.av.set(True)
+        self.sv.set(False)
+        self.adv.set(True)
+        self._save_current_settings()
+        self._start(scheduled=True)
 
     def _export_history(self):
         p = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV","*.csv")])
@@ -1910,6 +1986,73 @@ class App(ctk.CTk):
             ctk.CTkLabel(c, text=title, font=ctk.CTkFont(family=F, size=11, weight="bold"),
                          text_color=TXT).pack(anchor="w", padx=12, pady=(8,4))
         return c
+
+    def _live_widget(self, name):
+        widget = getattr(self, name, None)
+        if widget is None:
+            return None
+        try:
+            return widget if widget.winfo_exists() else None
+        except tk.TclError:
+            return None
+
+    def _safe_config(self, name, **kwargs):
+        widget = self._live_widget(name)
+        if not widget:
+            return
+        try:
+            widget.configure(**kwargs)
+        except tk.TclError:
+            pass
+
+    def _safe_progress_set(self, value):
+        self._run_progress = max(0.0, min(1.0, float(value or 0)))
+        widget = self._live_widget("prog")
+        if not widget:
+            return
+        try:
+            widget.set(self._run_progress)
+        except tk.TclError:
+            pass
+
+    def _set_run_status(self, text, color=TEAL, progress=None):
+        self._run_state_text = text
+        self._run_state_color = color
+        if progress is not None:
+            self._run_progress = max(0.0, min(1.0, float(progress or 0)))
+
+        def apply():
+            self._safe_config("slbl", text=self._run_state_text, text_color=self._run_state_color)
+            if progress is not None:
+                self._safe_progress_set(self._run_progress)
+        self.after(0, apply)
+
+    def _is_worker_running(self):
+        return bool(self.worker_thread and self.worker_thread.is_alive())
+
+    def _sync_run_controls(self):
+        running = self._is_worker_running() or self._run_active
+        has_data = bool(self.inspections)
+        selected = self.selected_inspection_index is not None
+
+        if running:
+            self._safe_config("brun_now", state="disabled")
+            self._safe_config("bstart", state="disabled")
+            self._safe_config("btest", state="disabled")
+            self._safe_config("bpause", state="normal")
+            self._safe_config("bstop", state="normal")
+        else:
+            state = "normal" if has_data else "disabled"
+            self._safe_config("brun_now", state=state)
+            self._safe_config("bstart", state=state)
+            self._safe_config("btest", state="normal" if has_data and selected else "disabled")
+            self._safe_config("bpause", state="disabled", text="Pause")
+            self._safe_config("bstop", state="disabled")
+
+        self._safe_config("slbl", text=self._run_state_text, text_color=self._run_state_color)
+        self._safe_config("run_stat_lbl", text=self._run_stats_text)
+        self._safe_progress_set(self._run_progress)
+        self._update_auto_submit_warning()
 
     def _log(self, msg):
         ts = datetime.now().strftime("%H:%M:%S")

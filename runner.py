@@ -27,6 +27,13 @@ from history import add_record
 from notifier import send_daily_summary, send_error_alert
 from reporter import generate_report
 from runlock import get_remaining, mark_completed
+from run_state import (
+    clear_run_state,
+    is_interrupted_auto_run,
+    load_run_state,
+    start_run_state,
+    update_run_state,
+)
 from scheduler import (
     get_next_run_datetime,
     is_schedule_due_now,
@@ -35,11 +42,12 @@ from scheduler import (
 )
 from session_manager import has_saved_credentials, has_saved_session
 from singleton import acquire_lock, release_lock
-from template_lock import get_untested_templates
+from template_lock import get_invalid_templates
 
 
 logger = logging.getLogger(__name__)
 RUNNER_LOCK_FILE = os.path.join(DATA_DIR, ".runner.lock")
+MAX_CONSECUTIVE_FAILURES = 3
 
 
 def _setup_logging():
@@ -182,11 +190,11 @@ def execute_auto_run() -> bool:
         _send_blocking_error(f"Không load được dữ liệu: {e}")
         return False
 
-    templates = sorted({i.template_name for i in inspections})
-    untested = get_untested_templates(templates)
-    if untested:
+    invalid_templates = get_invalid_templates(inspections)
+    if invalid_templates:
         _send_blocking_error(
-            "Auto Mode bị chặn vì template chưa test:\n" + "\n".join(f"- {t}" for t in untested)
+            "Auto Mode bị chặn vì template chưa test hoặc CSV đã đổi:\n" +
+            "\n".join(f"- {t}" for t in invalid_templates)
         )
         return False
 
@@ -205,6 +213,15 @@ def execute_auto_run() -> bool:
     total = len(run_list)
     success = 0
     failed = 0
+    consecutive_failures = 0
+    recent_errors = []
+    start_run_state(
+        data_file=data_file,
+        image_folder=image_folder,
+        total=total,
+        auto_submit=True,
+        scheduled=True,
+    )
 
     try:
         engine.start_browser()
@@ -220,17 +237,29 @@ def execute_auto_run() -> bool:
 
         for idx, insp in enumerate(run_list, 1):
             _log(f"[{idx}/{total}] AUTO: {insp.template_name} | {insp.site_location}")
+            update_run_state(
+                status="running",
+                current_index=idx,
+                current_template=insp.template_name,
+                total=total,
+                done=idx - 1,
+                success=success,
+                failed=failed,
+            )
             started = datetime.now()
             ok = engine.run_inspection(insp, auto_submit=True)
             errors = []
             if ok:
+                consecutive_failures = 0
                 if not engine.verify_inspection_saved(insp.template_name):
                     _log("Submitted but not verified in list yet")
                 mark_completed(insp.template_name, insp.site_location)
                 success += 1
             else:
                 errors = engine.item_errors or [f"Failed: {insp.template_name}"]
+                recent_errors.extend(errors)
                 failed += 1
+                consecutive_failures += 1
 
             add_record(
                 insp.template_name,
@@ -258,6 +287,35 @@ def execute_auto_run() -> bool:
                 duration_sec=duration_sec,
                 data_file=data_file,
             )
+            update_run_state(
+                status="running",
+                current_index=idx,
+                current_template=insp.template_name,
+                total=total,
+                done=idx,
+                success=success,
+                failed=failed,
+            )
+
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                msg = (
+                    f"Auto Mode stopped after {consecutive_failures} consecutive failures. "
+                    "No more inspections will run until this is checked."
+                )
+                _log(msg)
+                screenshot = None
+                try:
+                    screenshot = engine._screenshot_error("runner_consecutive_failures")
+                except Exception:
+                    pass
+                send_error_alert(
+                    msg, screenshot, insp.template_name, insp.site_location,
+                    question=getattr(engine, "current_question", ""),
+                    url=engine.page.url if engine.page else "",
+                    details=recent_errors[-8:],
+                )
+                update_run_state(status="blocked")
+                break
 
         return failed == 0
     except Exception as e:
@@ -279,10 +337,17 @@ def execute_auto_run() -> bool:
             engine.close_browser()
         except Exception:
             pass
+        clear_run_state()
         release_lock()
 
 
 def run_if_due(force: bool = False, quiet: bool = False) -> Optional[bool]:
+    state = load_run_state()
+    data_file = get_last_data_file()
+    if is_interrupted_auto_run(state, data_file):
+        _log("Phát hiện Auto run bị gián đoạn. Runner chạy tiếp phần còn lại.")
+        return execute_auto_run()
+
     schedule = load_schedule()
     if not force:
         due, scheduled_time, reason = is_schedule_due_now(schedule)

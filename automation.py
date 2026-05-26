@@ -64,6 +64,9 @@ class AutomationEngine:
         self._paused = False
         self._stopped = False
         self.item_errors: List[str] = []
+        self.current_template = ""
+        self.current_site = ""
+        self.current_question = ""
         self._items_ok = 0
         self._images_uploaded = 0
         self._images_failed = 0
@@ -316,6 +319,51 @@ class AutomationEngine:
     # ── Main Run ──
     def run_inspection(self, data: InspectionData, auto_submit: bool = True) -> bool:
         """
+        Run full inspection. SafetyCulture sometimes shows a transient
+        "An error has occurred" dialog after an answer click; when that happens
+        abandon the draft and rerun the same template from the beginning.
+        """
+        for attempt in range(1, RUN_RETRY_MAX + 1):
+            self.item_errors = []
+            self.current_template = data.template_name
+            self.current_site = data.site_location
+            self.current_question = ""
+            self._items_ok = 0
+            self._images_uploaded = 0
+            self._images_failed = 0
+
+            try:
+                if attempt > 1:
+                    self._log(
+                        f"Retrying same template from beginning "
+                        f"({attempt}/{RUN_RETRY_MAX}): {data.template_name}"
+                    )
+                return self._run_inspection_once(data, auto_submit)
+            except SafetyCultureTransientError as e:
+                self._log(
+                    f"SafetyCulture error popup detected - retrying template "
+                    f"({attempt}/{RUN_RETRY_MAX})"
+                )
+                if attempt >= RUN_RETRY_MAX:
+                    stamp = datetime.now().strftime("%H%M%S")
+                    ss = self._screenshot_error(f"fatal_{stamp}")
+                    self._save_html_dump(f"fatal_{stamp}")
+                    self._log(f"FATAL: {str(e)}")
+                    send_error_alert(
+                        str(e), ss, data.template_name, data.site_location,
+                        question=self.current_question,
+                        url=self.page.url if self.page else "",
+                        details=self.item_errors[:8],
+                    )
+                    logger.exception("Inspection failed after SafetyCulture retries")
+                    return False
+                self._recover_after_safetyculture_error()
+                continue
+
+        return False
+
+    def _run_inspection_once(self, data: InspectionData, auto_submit: bool = True) -> bool:
+        """
         Run full inspection with retry on network errors.
         auto_submit=True: Complete/Submit if no errors (Auto Mode)
         auto_submit=False: Fill only, don't submit (Test Mode)
@@ -342,6 +390,7 @@ class AutomationEngine:
 
             self._fill_all_items(data.items)
             self._check_state()
+            self._dismiss_popups()
 
             if not auto_submit:
                 self._scroll_to_bottom()
@@ -360,7 +409,13 @@ class AutomationEngine:
                     self._log(f"  - {e}")
                 ss = self._screenshot_error("blocked_submit")
                 self._save_html_dump("blocked_submit")
-                send_error_alert(err_msg, ss, data.template_name, data.site_location)
+                send_error_alert(
+                    err_msg, ss, data.template_name, data.site_location,
+                    question=self.current_question,
+                    url=self.page.url if self.page else "",
+                    details=self.item_errors[:8],
+                )
+                self._abandon_current_inspection("blocked_submit")
                 return False
 
             # Safe to submit
@@ -370,6 +425,8 @@ class AutomationEngine:
                               len(data.items), len(self.item_errors))
             return True
 
+        except SafetyCultureTransientError:
+            raise
         except StopRequested:
             self._log("Stopped by user")
             return False
@@ -377,8 +434,14 @@ class AutomationEngine:
             ss = self._screenshot_error(f"fatal_{datetime.now().strftime('%H%M%S')}")
             self._save_html_dump(f"fatal_{datetime.now().strftime('%H%M%S')}")
             self._log(f"FATAL: {str(e)}")
-            send_error_alert(str(e), ss, data.template_name, data.site_location)
+            send_error_alert(
+                str(e), ss, data.template_name, data.site_location,
+                question=self.current_question,
+                url=self.page.url if self.page else "",
+                details=self.item_errors[:8],
+            )
             logger.exception("Inspection failed")
+            self._abandon_current_inspection("fatal")
             return False
 
     def verify_inspection_saved(self, template_name: str) -> bool:
@@ -750,9 +813,11 @@ class AutomationEngine:
         for idx, item in enumerate(items):
             self._check_state()
             self._dismiss_popups()
+            self.current_question = item.question
 
             # Special command: navigate to next page
             if item.answer.strip().upper() == "NEXTPAGE" or item.question.strip().upper() == "NEXTPAGE":
+                self.current_question = "NEXTPAGE"
                 self._log(f"  [{idx+1}/{total}] >>> Next Page")
                 if self._go_next_page():
                     self._items_ok += 1
@@ -776,6 +841,8 @@ class AutomationEngine:
                 if not self._answer_question(item):
                     self.item_errors.append(f"Answer failed: {item.question[:50]}")
                     item_ok = False
+            except SafetyCultureTransientError:
+                raise
             except Exception as e:
                 elapsed = time.time() - item_start
                 if elapsed > ITEM_TIMEOUT:
@@ -794,7 +861,11 @@ class AutomationEngine:
             if item.image_paths:
                 for img in item.image_paths:
                     try:
-                        ok = self._upload_image_for_question(img, item.question)
+                        upload_question = self._resolve_image_upload_question(item.question, img)
+                        if upload_question != item.question:
+                            self._log(f"    Image target: {upload_question[:60]}")
+                        self.current_question = upload_question
+                        ok = self._upload_image_for_question(img, upload_question)
                         if ok:
                             self._images_uploaded += 1
                         elif item.image_required:
@@ -804,6 +875,8 @@ class AutomationEngine:
                         else:
                             self._log(f"    WARN: Optional image skipped")
                             self._images_failed += 1
+                    except SafetyCultureTransientError:
+                        raise
                     except Exception as e:
                         self._log(f"    Upload exception: {str(e)[:40]}")
                         self._images_failed += 1
@@ -1053,14 +1126,25 @@ class AutomationEngine:
                 f'button:has-text("{label}"), [role="button"]:has-text("{label}"), '
                 f'[role="radio"]:has-text("{label}"), label:has-text("{label}")').first
             if btn.count() > 0:
-                try:
-                    btn.scroll_into_view_if_needed()
-                    btn.click()
-                    time.sleep(0.3)
-                    self._log(f"    Clicked: {label}")
-                    return True
-                except:
-                    continue
+                for attempt in range(2):
+                    try:
+                        btn.scroll_into_view_if_needed()
+                        btn.click()
+                        time.sleep(0.5)
+                        state = self._verify_button_answer(btn, label)
+                        if state is False and attempt == 0:
+                            self._log(f"    Verify retry: {label}")
+                            continue
+                        if state is False:
+                            self._log(f"    WARN: Click verify failed: {label}")
+                            return False
+                        suffix = " (verified)" if state is True else ""
+                        self._log(f"    Clicked: {label}{suffix}")
+                        return True
+                    except SafetyCultureTransientError:
+                        raise
+                    except:
+                        continue
         return False
 
     def _try_fill_input(self, container: Locator, value: str) -> bool:
@@ -1086,8 +1170,13 @@ class AutomationEngine:
                     # Press Tab to trigger validation/blur
                     self.page.keyboard.press("Tab")
                     time.sleep(0.2)
+                    if not self._verify_input_value(inp, value):
+                        self._log(f"    WARN: Input verify failed: {value}")
+                        return False
                     self._log(f"    Filled input: {value}")
                     return True
+                except SafetyCultureTransientError:
+                    raise
                 except:
                     continue
         return False
@@ -1099,6 +1188,9 @@ class AutomationEngine:
         if sel.count() > 0:
             try:
                 sel.select_option(label=value)
+                if not self._verify_select_value(sel, value):
+                    self._log(f"    WARN: Select verify failed: {value}")
+                    return False
                 self._log(f"    Selected: {value}")
                 return True
             except:
@@ -1120,7 +1212,8 @@ class AutomationEngine:
                 if option.count() > 0:
                     option.click()
                     time.sleep(0.3)
-                    self._log(f"    Dropdown selected: {value}")
+                    suffix = " (verified)" if self._verify_container_has_answer(container, value) else ""
+                    self._log(f"    Dropdown selected: {value}{suffix}")
                     return True
                 # Try shorter match
                 short_val = value[:20]
@@ -1128,7 +1221,8 @@ class AutomationEngine:
                 if option2.count() > 0:
                     option2.click()
                     time.sleep(0.3)
-                    self._log(f"    Dropdown selected (partial): {value}")
+                    suffix = " (verified)" if self._verify_container_has_answer(container, value) else ""
+                    self._log(f"    Dropdown selected (partial): {value}{suffix}")
                     return True
                 self._log(f"    WARN: Dropdown option not found: {value}")
                 return False
@@ -1156,7 +1250,8 @@ class AutomationEngine:
                     if option.count() > 0:
                         option.click()
                         time.sleep(0.3)
-                        self._log(f"    Dropdown trigger selected: {value}")
+                        suffix = " (verified)" if self._verify_container_has_answer(container, value) else ""
+                        self._log(f"    Dropdown trigger selected: {value}{suffix}")
                         return True
                     # Type to search
                     self.page.keyboard.type(value, delay=30)
@@ -1165,6 +1260,8 @@ class AutomationEngine:
                     if option2.count() > 0:
                         option2.click()
                         time.sleep(0.3)
+                        suffix = " (verified)" if self._verify_container_has_answer(container, value) else ""
+                        self._log(f"    Dropdown trigger selected: {value}{suffix}")
                         return True
                     self._log(f"    WARN: Dropdown option not found after typing: {value}")
                     return False
@@ -1184,11 +1281,114 @@ class AutomationEngine:
                 time.sleep(0.2)
                 ta.fill(value)
                 time.sleep(0.2)
+                if not self._verify_input_value(ta, value):
+                    self._log(f"    WARN: Textarea verify failed: {value[:30]}")
+                    return False
                 self._log(f"    Filled textarea: {value[:30]}")
                 return True
             except:
                 pass
         return False
+
+    def _verify_button_answer(self, btn: Locator, label: str):
+        """
+        Return True when the clicked answer exposes selected state, False when
+        it explicitly exposes an unselected state, None when the UI has no
+        machine-readable selected state.
+        """
+        try:
+            return btn.evaluate(
+                """
+                (el) => {
+                    const norm = (s) => (s || "").replace(/\\s+/g, " ").trim().toLowerCase();
+                    const nodes = [el, ...Array.from(el.querySelectorAll("*"))];
+                    const checkedAttrs = ["aria-checked", "aria-pressed", "aria-selected"];
+                    for (const node of nodes) {
+                        if (node.checked === true) return true;
+                        const state = norm(node.getAttribute("data-state") || "");
+                        if (["checked", "selected", "active", "on"].includes(state)) return true;
+                        for (const attr of checkedAttrs) {
+                            const value = norm(node.getAttribute(attr) || "");
+                            if (value === "true") return true;
+                        }
+                        const cls = norm(node.getAttribute("class") || "");
+                        if (/\\b(selected|active|checked)\\b/.test(cls)) return true;
+                    }
+                    let sawExplicitFalse = false;
+                    for (const node of nodes) {
+                        if (node.checked === false && ["radio", "checkbox"].includes(norm(node.type))) {
+                            sawExplicitFalse = true;
+                        }
+                        const role = norm(node.getAttribute("role") || "");
+                        for (const attr of checkedAttrs) {
+                            const value = norm(node.getAttribute(attr) || "");
+                            if (value === "false" && ["radio", "checkbox", "option"].includes(role)) {
+                                sawExplicitFalse = true;
+                            }
+                        }
+                    }
+                    return sawExplicitFalse ? false : null;
+                }
+                """
+            )
+        except:
+            return None
+
+    def _verify_input_value(self, loc: Locator, expected: str) -> bool:
+        try:
+            actual = loc.input_value(timeout=2000)
+        except:
+            try:
+                actual = loc.evaluate("(el) => el.value || el.textContent || ''")
+            except:
+                return False
+        actual_norm = self._normalize_answer_value(actual)
+        expected_norm = self._normalize_answer_value(expected)
+        if actual_norm == expected_norm:
+            return True
+        try:
+            return abs(float(actual_norm) - float(expected_norm)) < 0.0001
+        except:
+            return expected_norm in actual_norm or actual_norm in expected_norm
+
+    def _verify_select_value(self, loc: Locator, expected: str) -> bool:
+        try:
+            actual = loc.evaluate(
+                """
+                (el) => {
+                    const opt = el.selectedOptions && el.selectedOptions[0];
+                    return opt ? `${opt.label || ""} ${opt.value || ""}` : (el.value || "");
+                }
+                """
+            )
+            actual_norm = self._normalize_answer_value(actual)
+            expected_norm = self._normalize_answer_value(expected)
+            return expected_norm in actual_norm or actual_norm in expected_norm
+        except:
+            return False
+
+    def _verify_container_has_answer(self, container: Locator, expected: str) -> bool:
+        try:
+            data = container.evaluate(
+                """
+                (el) => {
+                    const values = [];
+                    for (const input of el.querySelectorAll("input, textarea, select")) {
+                        values.push(input.value || "");
+                    }
+                    values.push(el.innerText || el.textContent || "");
+                    return values.join(" ");
+                }
+                """
+            )
+            actual_norm = self._normalize_answer_value(data)
+            expected_norm = self._normalize_answer_value(expected)
+            return bool(expected_norm and expected_norm in actual_norm)
+        except:
+            return False
+
+    def _normalize_answer_value(self, value: str) -> str:
+        return re.sub(r"\s+", " ", str(value or "")).strip().lower()
 
     def _try_fill_nearby_input(self, question: str, value: str) -> bool:
         """
@@ -1454,6 +1654,130 @@ class AutomationEngine:
                                'textarea:visible'], timeout=2000)
         if ni: ni.fill(item.notes); time.sleep(0.2)
 
+    def _resolve_image_upload_question(self, question: str, img_path: str) -> str:
+        """
+        Some customer CSV rows attach the image filename to the previous text
+        field, while the SafetyCulture form has a separate photo question right
+        above it. Resolve that visible photo question before uploading.
+        """
+        try:
+            if re.search(r"\b(photo|picture|image|upload|camera)\b", question or "", re.I) and self._visible_question_text_matches(question):
+                return question
+
+            candidate = self._find_visible_photo_question_text(question, img_path)
+            if not candidate:
+                return question
+
+            q_norm = self._compact_text(question)
+            c_norm = self._compact_text(candidate)
+            if c_norm and c_norm != q_norm:
+                media_words = re.search(r"\b(photo|picture|image|upload|camera)\b", candidate, re.I)
+                current_media = re.search(r"(photo|picture|image|upload|camera)", question, re.I)
+                if media_words and (not current_media or not c_norm.startswith(q_norm[:18])):
+                    return candidate
+        except Exception as e:
+            self._log(f"    DEBUG: image target resolve failed: {str(e)[:50]}")
+        return question
+
+    def _visible_question_text_matches(self, question: str) -> bool:
+        try:
+            return bool(self.page.evaluate(
+                """
+                (question) => {
+                    const normalize = (s) => (s || "").replace(/\\s+/g, " ").trim().toLowerCase();
+                    const wanted = normalize(question);
+                    if (!wanted) return false;
+                    const partial = wanted.split(" ").filter(Boolean).slice(0, 7).join(" ");
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.display !== "none" &&
+                            style.visibility !== "hidden" &&
+                            rect.width > 0 &&
+                            rect.height > 0 &&
+                            rect.bottom >= 0 &&
+                            rect.top <= window.innerHeight;
+                    };
+                    const elements = Array.from(document.querySelectorAll("label,span,p,div,h1,h2,h3,h4,[role='heading'],[data-testid]"));
+                    return elements.some((el) => {
+                        if (!visible(el)) return false;
+                        const text = normalize(el.innerText || el.textContent || "");
+                        return text === wanted || text.includes(wanted) || (partial && text.includes(partial));
+                    });
+                }
+                """,
+                question,
+            ))
+        except:
+            return False
+
+    def _find_visible_photo_question_text(self, question: str, img_path: str) -> str:
+        try:
+            filename = os.path.splitext(os.path.basename(img_path))[0]
+            return self.page.evaluate(
+                """
+                ({question, filename}) => {
+                    const normalize = (s) => (s || "").replace(/\\s+/g, " ").trim();
+                    const lower = (s) => normalize(s).toLowerCase();
+                    const tokensOf = (s) => lower(s)
+                        .replace(/[^a-z0-9]+/g, " ")
+                        .split(" ")
+                        .filter((t) => t.length >= 3)
+                        .filter((t) => ![
+                            "the", "and", "you", "your", "this", "that",
+                            "with", "case", "photo", "picture", "image", "jpeg",
+                            "jpg", "png"
+                        ].includes(t));
+                    const seed = lower(`${question} ${filename}`);
+                    const seedTokens = Array.from(new Set(tokensOf(seed)));
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.display !== "none" &&
+                            style.visibility !== "hidden" &&
+                            rect.width > 0 &&
+                            rect.height > 0 &&
+                            rect.bottom >= 0 &&
+                            rect.top <= window.innerHeight;
+                    };
+                    const mediaLike = (text) => /\\b(photo|picture|image|upload|camera)\\b/i.test(text);
+                    const badText = (text) => /\\b(add note|attach media|create action|previous page|complete inspection)\\b/i.test(text);
+                    const candidates = Array.from(document.querySelectorAll(
+                        "label,span,p,div,h1,h2,h3,h4,[role='heading'],[data-testid]"
+                    ))
+                        .filter(visible)
+                        .map((el) => {
+                            const text = normalize(el.innerText || el.textContent || "");
+                            const rect = el.getBoundingClientRect();
+                            return { el, text, low: lower(text), area: rect.width * rect.height };
+                        })
+                        .filter((c) => c.text.length >= 8 && c.text.length <= 180)
+                        .filter((c) => mediaLike(c.text) && !badText(c.text))
+                        .map((c) => {
+                            const textTokens = new Set(tokensOf(c.text));
+                            let overlap = 0;
+                            for (const token of seedTokens) {
+                                if (textTokens.has(token) || c.low.includes(token)) overlap += 1;
+                            }
+                            let score = overlap * 10;
+                            if (/take.*photo|photo.*sushi|display case|temperature/i.test(c.text)) score += 8;
+                            if (filename && lower(filename).split(/[^a-z0-9]+/).some((t) => t && c.low.includes(t))) score += 6;
+                            if (c.low.includes(lower(question))) score += 4;
+                            return { ...c, score, overlap };
+                        })
+                        .filter((c) => c.overlap > 0 && c.score >= 8)
+                        .sort((a, b) => (b.score - a.score) || (a.text.length - b.text.length) || (a.area - b.area));
+                    return candidates.length ? candidates[0].text.replace(/^\\*\\s*/, "") : "";
+                }
+                """,
+                {"question": question, "filename": filename},
+            ) or ""
+        except:
+            return ""
+
+    def _compact_text(self, value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
+
     def _upload_image_for_question(self, img_path: str, question: str) -> bool:
         """Upload image to the media control that belongs to the given question."""
         if not os.path.exists(img_path):
@@ -1469,6 +1793,11 @@ class AutomationEngine:
             try:
                 media_btn = self._find_media_button_for_question(question)
                 if not media_btn:
+                    media_before = self._count_question_media(question)
+                    if self._upload_via_active_file_input(img_path, question, media_before):
+                        return True
+                    if self._upload_via_question_dropzone(img_path, question, media_before):
+                        return True
                     self._log(f"    No media button for this question")
                     return False
 
@@ -1500,6 +1829,8 @@ class AutomationEngine:
                     except PWTimeout:
                         self._log("    Add media file chooser not triggered; trying input fallback")
 
+                    if self._upload_via_media_button_input(media_btn, img_path, question, media_before):
+                        return True
                     if self._upload_via_active_file_input(img_path, question, media_before):
                         return True
                     raise RuntimeError("Add media input did not attach to this question")
@@ -1545,6 +1876,45 @@ class AutomationEngine:
                 raise
             self.page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
 
+    def _upload_via_media_button_input(self, media_btn, img_path: str, question: str, media_before: int) -> bool:
+        """
+        Some SafetyCulture Add media controls keep the file input as a sibling
+        of the clicked button and do not emit a Playwright file chooser event.
+        Prefer that nearest input over a page-wide input lookup so the upload
+        attaches to the intended question instead of a nearby media/signature row.
+        """
+        try:
+            handle = media_btn.evaluate_handle(
+                """
+                (button) => {
+                    let node = button;
+                    for (let depth = 0; node && node !== document.body && depth < 8; depth += 1) {
+                        const inputs = Array.from(node.querySelectorAll('input[type="file"]'))
+                            .filter((input) => !input.disabled);
+                        if (inputs.length) return inputs[0];
+                        node = node.parentElement;
+                    }
+                    return null;
+                }
+                """
+            )
+            file_input = handle.as_element()
+            if not file_input:
+                self._log("    No file input near clicked media button")
+                return False
+            file_input.set_input_files(img_path)
+            self._wait_upload()
+            if self._wait_question_media_added(question, media_before, timeout=30):
+                self._log(f"    Upload OK (near media input): {os.path.basename(img_path)}")
+                return True
+            self._log(
+                f"    Near media input did not attach to this question "
+                f"(media {media_before}->{self._count_question_media(question)})"
+            )
+        except Exception as e:
+            self._log(f"    Near media input upload failed: {str(e)[:50]}")
+        return False
+
     def _upload_via_active_file_input(self, img_path: str, question: str, media_before: int) -> bool:
         """
         SafetyCulture's dedicated Add media rows may not emit Playwright's file
@@ -1575,6 +1945,35 @@ class AutomationEngine:
             self._log(f"    Question-scoped file input did not attach to this question (media {media_before}->{self._count_question_media(question)})")
         except Exception as e:
             self._log(f"    File input attempt failed: {str(e)[:40]}")
+        return False
+
+    def _upload_via_question_dropzone(self, img_path: str, question: str, media_before: int) -> bool:
+        """
+        Photo-only SafetyCulture questions can render without an Attach media
+        button. In that case the question card/blank dropzone itself opens the
+        file chooser.
+        """
+        target = self._find_photo_dropzone_for_question(question)
+        if not target:
+            return False
+        try:
+            with self.page.expect_file_chooser(timeout=10000) as fc_info:
+                target.scroll_into_view_if_needed()
+                time.sleep(0.3)
+                self._click_media_button(target)
+                self._log("    Clicked photo upload area")
+            file_chooser = fc_info.value
+            file_chooser.set_files(img_path)
+            time.sleep(5)
+            self._wait_upload()
+            if self._wait_question_media_added(question, media_before, timeout=30):
+                self._log(f"    Upload OK (photo area): {os.path.basename(img_path)}")
+                return True
+            self._log(f"    Photo area upload did not attach to this question (media {media_before}->{self._count_question_media(question)})")
+        except PWTimeout:
+            self._log("    Photo upload area did not open file chooser")
+        except Exception as e:
+            self._log(f"    Photo area upload failed: {str(e)[:50]}")
         return False
 
     def _wait_question_media_added(self, question: str, media_before: int, timeout: int = 30) -> bool:
@@ -1700,6 +2099,85 @@ class AutomationEngine:
         )
         return handle.as_element()
 
+    def _find_photo_dropzone_for_question(self, question: str):
+        try:
+            handle = self.page.evaluate_handle(
+                """
+                (question) => {
+                    const normalize = (s) => (s || "").replace(/\\s+/g, " ").trim().toLowerCase();
+                    const wanted = normalize(question);
+                    const partial = wanted.split(" ").filter(Boolean).slice(0, 7).join(" ");
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.display !== "none" &&
+                            style.visibility !== "hidden" &&
+                            rect.width > 0 &&
+                            rect.height > 0 &&
+                            rect.bottom >= 0 &&
+                            rect.top <= window.innerHeight;
+                    };
+                    const textOf = (el) => normalize(el.innerText || el.textContent || "");
+                    const hasQuestion = (el) => {
+                        const text = textOf(el);
+                        return text && (text.includes(wanted) || (partial && text.includes(partial)));
+                    };
+                    const isBadClick = (el) => /\\b(add note|create action|previous page|complete inspection)\\b/i
+                        .test(el.innerText || el.getAttribute("aria-label") || "");
+                    const roots = Array.from(document.querySelectorAll("body *"))
+                        .filter((el) => visible(el) && hasQuestion(el))
+                        .map((el) => {
+                            const rect = el.getBoundingClientRect();
+                            return { el, len: textOf(el).length, area: rect.width * rect.height };
+                        })
+                        .sort((a, b) => (a.len - b.len) || (a.area - b.area));
+
+                    for (const match of roots) {
+                        let node = match.el;
+                        for (let depth = 0; node && node !== document.body && depth < 8; depth += 1, node = node.parentElement) {
+                            if (!visible(node) || !hasQuestion(node)) continue;
+                            const rect = node.getBoundingClientRect();
+                            if (rect.height < 60 || rect.height > 520 || rect.width < 180 || rect.width > 1100) continue;
+
+                            const inputs = Array.from(node.querySelectorAll('input[type="file"]'))
+                                .filter((el) => !el.disabled);
+                            if (inputs.length) return inputs[0];
+
+                            const clickables = Array.from(node.querySelectorAll(
+                                "button,a,[role='button'],[tabindex],[data-testid],[aria-label]"
+                            ))
+                                .filter((el) => visible(el) && !isBadClick(el))
+                                .filter((el) => {
+                                    const label = normalize([
+                                        el.innerText,
+                                        el.getAttribute("aria-label"),
+                                        el.getAttribute("title"),
+                                        el.getAttribute("data-testid")
+                                    ].filter(Boolean).join(" "));
+                                    if (!label) return false;
+                                    return /\\b(photo|picture|image|camera|upload|file|media|attachment|add)\\b/.test(label);
+                                })
+                                .sort((a, b) => {
+                                    const ar = a.getBoundingClientRect();
+                                    const br = b.getBoundingClientRect();
+                                    return (Math.abs(ar.top - rect.top) - Math.abs(br.top - rect.top));
+                                });
+                            if (clickables.length) return clickables[0];
+
+                            // Fallback: click the card itself, away from Add note.
+                            node.setAttribute("data-checkpilot-photo-dropzone", "1");
+                            return node;
+                        }
+                    }
+                    return null;
+                }
+                """,
+                question,
+            )
+            return handle.as_element()
+        except:
+            return None
+
     def _count_question_media(self, question: str) -> int:
         try:
             return int(self.page.evaluate(
@@ -1722,14 +2200,24 @@ class AutomationEngine:
                         return text && (text.includes(wanted) || (partial && text.includes(partial)));
                     };
                     const hasMediaButton = (el) => /\\b(add media|attach media)\\b/i.test(el.innerText || "");
-                    const mediaCountIn = (root) => Array.from(root.querySelectorAll("img, video, canvas, [data-testid*='media'], [data-testid*='attachment'], [class*='thumbnail'], [class*='attachment']"))
+                    const mediaCountIn = (root) => Array.from(root.querySelectorAll(
+                        "img, video, canvas, [data-testid*='media'], [data-testid*='attachment'], " +
+                        "[class*='thumbnail'], [class*='attachment'], [class*='preview'], [class*='uploaded']"
+                    ))
                         .filter((el) => {
                             const rect = el.getBoundingClientRect();
                             const style = window.getComputedStyle(el);
                             if (style.display === "none" || style.visibility === "hidden") return false;
                             if (rect.width <= 8 || rect.height <= 8) return false;
-                            if (el.tagName.toLowerCase() === "img" && !el.getAttribute("src")) return false;
-                            return true;
+                            const tag = el.tagName.toLowerCase();
+                            const text = textOf(el);
+                            if (/\\b(add media|attach media|add note|create action)\\b/.test(text)) return false;
+                            if (tag === "img" && !el.getAttribute("src") && !el.getAttribute("srcset")) return false;
+                            if (tag === "img" || tag === "video" || tag === "canvas") return true;
+                            if (style.backgroundImage && style.backgroundImage !== "none") return true;
+                            const cls = normalize(el.className || "");
+                            const testid = normalize(el.getAttribute("data-testid") || "");
+                            return /thumbnail|preview|uploaded|attachment/.test(`${cls} ${testid}`);
                         }).length;
                     const matches = Array.from(document.querySelectorAll("body *"))
                         .filter((el) => visible(el))
@@ -1745,8 +2233,14 @@ class AutomationEngine:
                         let node = match.el;
                         while (node && node !== document.body) {
                             const rect = node.getBoundingClientRect();
-                            if (hasQuestion(node) && hasMediaButton(node) && rect.height <= 420) {
-                                return mediaCountIn(node);
+                            if (hasQuestion(node) && rect.height <= 620) {
+                                const text = textOf(node);
+                                const looksLikePhotoQuestion = /\\b(photo|picture|image|upload|camera)\\b/i.test(text);
+                                const count = mediaCountIn(node);
+                                if (count > 0) {
+                                    return count;
+                                }
+                                if (hasMediaButton(node) && rect.height >= 70) return 0;
                             }
                             if (rect.height > 700) break;
                             node = node.parentElement;
@@ -2033,8 +2527,21 @@ class AutomationEngine:
             self._save_html_dump("complete_button_not_found")
             raise RuntimeError(f"Complete/Submit button not found. url='{self.page.url}', screenshot='{ss}'")
         time.sleep(2.0)
+        if self._detect_safetyculture_error():
+            self._raise_safetyculture_error_popup("safetyculture_error_submit")
 
-        # Confirm popup
+        state = self._visible_dialog_state()
+        if state["attention"]:
+            self._log(f"  SafetyCulture requires attention: {state['buttons']}")
+            ss = self._screenshot_error("submit_requires_attention")
+            self._save_html_dump("submit_requires_attention")
+            raise RuntimeError(f"SafetyCulture still has required items. url='{self.page.url}', screenshot='{ss}'")
+        if state["submitted"]:
+            self._log("  Submit complete dialog detected")
+            self._click_dialog_button(['button:has-text("Save and close")', 'button:has-text("Close")'])
+            time.sleep(PAGE_LOAD_WAIT)
+            return
+
         dialogs = self.page.locator('[role="dialog"]:visible, [class*="modal"]:visible')
         confirmed = False
         confirm_sels = [
@@ -2069,9 +2576,24 @@ class AutomationEngine:
         else:
             confirmed = self._click_first_found(confirm_sels, timeout=3000)
 
+        time.sleep(1.0)
+        if self._detect_safetyculture_error():
+            self._raise_safetyculture_error_popup("safetyculture_error_submit")
+        state = self._visible_dialog_state()
+        if state["attention"]:
+            self._log(f"  SafetyCulture requires attention: {state['buttons']}")
+            ss = self._screenshot_error("submit_requires_attention")
+            self._save_html_dump("submit_requires_attention")
+            raise RuntimeError(f"SafetyCulture still has required items. url='{self.page.url}', screenshot='{ss}'")
+        if state["submitted"]:
+            self._log("  Submit complete dialog detected")
+            self._click_dialog_button(['button:has-text("Save and close")', 'button:has-text("Close")'])
+            time.sleep(PAGE_LOAD_WAIT)
+            return
+
         # Some SafetyCulture flows submit immediately after the first Complete
-        # click, without a confirmation modal. Only block when a visible dialog
-        # remains and no confirmation button could be clicked.
+        # click, without a confirmation modal. Only block when an unknown
+        # visible dialog remains and no confirmation button could be clicked.
         if dialogs.count() > 0 and not confirmed:
             self._log(f"  DEBUG: visible dialog buttons: {self._visible_dialog_button_texts()}")
             ss = self._screenshot_error("confirm_submit_button_not_found")
@@ -2082,6 +2604,60 @@ class AutomationEngine:
             self.page.wait_for_load_state("networkidle", timeout=15000)
         except:
             pass
+
+    def _visible_dialog_state(self) -> dict:
+        state = {"text": "", "buttons": "", "submitted": False, "attention": False}
+        try:
+            data = self.page.evaluate(
+                """
+                () => {
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.display !== "none" &&
+                            style.visibility !== "hidden" &&
+                            rect.width > 0 &&
+                            rect.height > 0;
+                    };
+                    const normalize = (s) => (s || "").replace(/\\s+/g, " ").trim();
+                    const dialogs = Array.from(document.querySelectorAll("[role='dialog'], [class*='modal']"))
+                        .filter(visible);
+                    const text = dialogs.map((d) => normalize(d.innerText || d.textContent || "")).join(" | ");
+                    const buttons = dialogs.flatMap((d) => Array.from(d.querySelectorAll("button,[role='button']")))
+                        .filter(visible)
+                        .map((b) => normalize(b.innerText || b.getAttribute("aria-label") || ""))
+                        .filter(Boolean);
+                    return { text, buttons };
+                }
+                """
+            )
+            text = data.get("text", "")
+            buttons = " | ".join(data.get("buttons", []))
+            low = f"{text} | {buttons}".lower()
+            state.update({"text": text, "buttons": buttons})
+            state["submitted"] = "view & export report" in low or "save and close" in low
+            state["attention"] = (
+                "requires attention" in low or
+                "pending item" in low or
+                "review inspection" in low or
+                "save as in progress" in low
+            )
+        except:
+            pass
+        return state
+
+    def _click_dialog_button(self, selectors: list) -> bool:
+        for sel in selectors:
+            try:
+                dialogs = self.page.locator('[role="dialog"]:visible, [class*="modal"]:visible')
+                for i in range(dialogs.count()):
+                    btn = dialogs.nth(i).locator(sel).first
+                    if btn.count() > 0 and btn.is_visible():
+                        btn.click(timeout=3000)
+                        return True
+            except:
+                continue
+        return False
 
     def _visible_dialog_button_texts(self) -> str:
         try:
@@ -2168,6 +2744,8 @@ class AutomationEngine:
         while self._paused:
             time.sleep(0.5)
             if self._stopped: raise StopRequested()
+        if self.page and self._detect_safetyculture_error():
+            self._raise_safetyculture_error_popup("safetyculture_error_popup")
 
     def _screenshot_error(self, name: str) -> Optional[str]:
         try:
@@ -2190,6 +2768,8 @@ class AutomationEngine:
     # ── Popup Dismiss ──
     def _dismiss_popups(self):
         """Detect and close unexpected popups/dialogs."""
+        if self._detect_safetyculture_error():
+            self._raise_safetyculture_error_popup("safetyculture_error_popup")
         try:
             for sel in POPUP_DISMISS_SELECTORS:
                 btn = self.page.locator(sel)
@@ -2205,6 +2785,97 @@ class AutomationEngine:
             self._handle_session_expired()
             return True
         return False
+
+    def _raise_safetyculture_error_popup(self, name: str):
+        ss = self._screenshot_error(name)
+        self._save_html_dump(name)
+        raise SafetyCultureTransientError(
+            f"SafetyCulture error popup appeared. url='{self.page.url}', screenshot='{ss}'"
+        )
+
+    def _recover_after_safetyculture_error(self):
+        """Leave the broken draft so the next attempt starts a fresh inspection."""
+        self._log("  Recovering from SafetyCulture popup before retry...")
+        self._abandon_current_inspection("safetyculture_error")
+
+    def _abandon_current_inspection(self, reason: str = ""):
+        """Leave a failed draft so the next template starts from a clean page."""
+        if not self.page:
+            return
+        self._log(f"  Leaving failed draft{f' ({reason})' if reason else ''}...")
+        try:
+            self.page.keyboard.press("Escape")
+            time.sleep(0.5)
+        except:
+            pass
+
+        try:
+            self.page.once("dialog", lambda dialog: dialog.accept())
+        except:
+            pass
+
+        for sel in [
+            'button:has-text("Close")',
+            'button[aria-label="Close"]',
+            'button:has-text("Cancel")',
+        ]:
+            try:
+                btn = self.page.locator(sel).first
+                if btn.count() > 0 and btn.is_visible():
+                    btn.click(timeout=2000)
+                    time.sleep(0.5)
+                    break
+            except:
+                continue
+
+        try:
+            self.page.goto(SC_INSPECTIONS_URL, timeout=30000)
+            time.sleep(PAGE_LOAD_WAIT)
+        except Exception as e:
+            self._log(f"  Recovery navigation warning: {str(e)[:80]}")
+
+        for sel in [
+            'button:has-text("Discard")',
+            'button:has-text("Leave")',
+            'button:has-text("Leave page")',
+            'button:has-text("Don\'t save")',
+        ]:
+            try:
+                btn = self.page.locator(sel).first
+                if btn.count() > 0 and btn.is_visible():
+                    btn.click(timeout=3000)
+                    time.sleep(1)
+                    break
+            except:
+                continue
+
+    def _detect_safetyculture_error(self) -> bool:
+        try:
+            return bool(self.page.evaluate(
+                """
+                () => {
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.display !== "none" &&
+                            style.visibility !== "hidden" &&
+                            rect.width > 0 &&
+                            rect.height > 0;
+                    };
+                    const text = Array.from(document.querySelectorAll(
+                        "[role='dialog'], [class*='modal'], body"
+                    ))
+                        .filter(visible)
+                        .map((el) => (el.innerText || el.textContent || "").replace(/\\s+/g, " "))
+                        .join(" | ");
+                    return /an error has occurred/i.test(text) &&
+                        (/please refresh this page/i.test(text) ||
+                         /try answering this question again/i.test(text));
+                }
+                """
+            ))
+        except:
+            return False
 
     def _detect_session_expired(self) -> bool:
         """Check if session expired dialog appeared."""
@@ -2344,4 +3015,8 @@ class AutomationEngine:
 
 
 class StopRequested(Exception):
+    pass
+
+
+class SafetyCultureTransientError(Exception):
     pass

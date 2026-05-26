@@ -1,4 +1,4 @@
-"""Telegram notification module for CheckPilot."""
+﻿"""Telegram notification module for CheckPilot."""
 import html
 import json
 import logging
@@ -123,7 +123,8 @@ def send_photo(photo_path: str, caption: str = "") -> bool:
 
 
 def send_error_alert(error_msg: str, screenshot_path: Optional[str] = None,
-                     template: str = "", site: str = ""):
+                     template: str = "", site: str = "", question: str = "",
+                     url: str = "", details=None):
     """Send formatted error alert with optional screenshot."""
     safe_error = html.escape(str(error_msg))
     text = (
@@ -134,11 +135,21 @@ def send_error_alert(error_msg: str, screenshot_path: Optional[str] = None,
         text += f"<b>Template:</b> {html.escape(template)}\n"
     if site:
         text += f"<b>Site:</b> {html.escape(site)}\n"
+    if question:
+        text += f"<b>Câu hỏi:</b> {html.escape(str(question)[:180])}\n"
+    if url:
+        text += f"<b>URL:</b> {html.escape(str(url)[:220])}\n"
+    if details:
+        if isinstance(details, (list, tuple)):
+            detail_text = "\n".join(f"- {html.escape(str(d)[:180])}" for d in details[:6])
+        else:
+            detail_text = html.escape(str(details)[:800])
+        text += f"\n<b>Chi tiết:</b>\n{detail_text}\n"
     text += f"<b>Thời gian:</b> {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
 
     send_message(text)
     if screenshot_path and os.path.exists(screenshot_path):
-        send_photo(screenshot_path, f"Screenshot lỗi: {str(error_msg)[:200]}")
+        send_photo(screenshot_path, f"Screenshot loi: {template or ''} {str(error_msg)[:160]}".strip())
 
 
 def send_success_report(template: str, site: str, items: int, errors: int):
