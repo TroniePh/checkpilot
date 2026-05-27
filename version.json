@@ -1,6 +1,6 @@
 {
-  "version": "2.5.6",
+  "version": "2.5.7",
   "release_date": "2026-05-27",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.5.6/CheckPilot_Setup_v2.5.6.exe",
-  "changelog": "v2.5.6: Adds template-time scheduling so each time slot runs only its assigned inspections, supports SKIP answers for no-click questions, and updates the Yummi Sushi CSV schedule including 11AM case photos."
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.5.7/CheckPilot_Setup_v2.5.7.exe",
+  "changelog": "v2.5.7: Fixes missed-slot catch-up order, hardens GUI updates from scheduler/worker threads, and keeps template-time scheduling with SKIP answers for Yummi Sushi."
 }
