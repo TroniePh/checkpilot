@@ -1,5 +1,12 @@
 # Changelog — CheckPilot™
 
+## v2.5.5 (2026-05-27)
+
+- Added missed-schedule catch-up: if Windows boots or the GUI starts shortly after a configured run time, Auto Mode runs the missed slot instead of waiting until the next day.
+- Kept the catch-up window bounded to 180 minutes by default to avoid very late accidental submissions.
+
+---
+
 ## v2.5.4 (2026-05-27)
 
 - Hotfix: Auto Mode and scheduler no longer block on stale template locks after CSV/app updates.

@@ -1445,7 +1445,10 @@ class App(ctk.CTk):
 
         due, scheduled_time, reason = is_schedule_due_now(cfg)
         if due:
-            self._log(f"Đúng giờ lịch {scheduled_time}. Bắt đầu Auto Mode full CSV.")
+            if reason == "missed":
+                self._log(f"Đã trễ lịch {scheduled_time}; chạy bù Auto Mode full CSV.")
+            else:
+                self._log(f"Đúng giờ lịch {scheduled_time}. Bắt đầu Auto Mode full CSV.")
             mark_schedule_run(cfg, scheduled_time)
             if self.scheduler:
                 self.scheduler.update_config(cfg)
@@ -1509,7 +1512,10 @@ class App(ctk.CTk):
 
         due, scheduled_time, reason = is_schedule_due_now(cfg)
         if due:
-            self._log(f"Đúng giờ lịch {scheduled_time}. Bắt đầu Auto Mode.")
+            if reason == "missed":
+                self._log(f"Đã trễ lịch {scheduled_time}; chạy bù Auto Mode.")
+            else:
+                self._log(f"Đúng giờ lịch {scheduled_time}. Bắt đầu Auto Mode.")
             self._force_scheduled_start = True
             self._schedule_slot_to_mark = scheduled_time
             return False

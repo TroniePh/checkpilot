@@ -1,6 +1,6 @@
 {
-  "version": "2.5.4",
+  "version": "2.5.5",
   "release_date": "2026-05-27",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.5.4/CheckPilot_Setup_v2.5.4.exe",
-  "changelog": "v2.5.4: Hotfix so Auto Mode and scheduler continue after validation even when template locks are stale from a CSV/app update. Template locks now warn only; item/upload guards still prevent unsafe submit."
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.5.5/CheckPilot_Setup_v2.5.5.exe",
+  "changelog": "v2.5.5: Adds missed-schedule catch-up for boot/restart cases. If Windows or the GUI starts shortly after a scheduled run time, CheckPilot runs that missed slot instead of waiting until the next day. Template locks remain warnings only."
 }

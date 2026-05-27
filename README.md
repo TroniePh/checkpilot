@@ -73,6 +73,8 @@ Nếu app chưa có file dữ liệu hoặc validate không đạt, lịch chạ
 
 Khi lịch đang bật, bấm Start ở Auto Mode sẽ không chạy ngay nếu chưa tới đúng phút đã set. Ví dụ lịch đặt `05:30`, nếu bấm Start lúc `05:10` thì app chuyển sang trạng thái chờ và tự chạy lúc `05:30`. Nếu bấm đúng trong phút `05:30` thì app chạy Auto Mode ngay và đánh dấu slot đó đã chạy để tránh chạy trùng.
 
+Nếu Windows/app mở lại sau giờ lịch nhưng còn trong khoảng chạy bù mặc định 180 phút, scheduler sẽ chạy bù slot vừa trễ. Ví dụ lịch `17:30`, máy có điện lại lúc `17:32` thì runner sẽ tự chạy Auto Mode cho slot `17:30`.
+
 ## Khởi động cùng Windows
 
 Trong Settings, mục Windows có 2 lựa chọn:
@@ -90,6 +92,8 @@ Runner trước login dùng `main.py --runner --watch` và ép browser chạy he
 - Nếu SafetyCulture yêu cầu MFA/manual login, runner sẽ dừng và gửi Telegram lỗi vì trước login không có người thao tác.
 
 Khi lịch đang bật, bấm Start ở Auto Mode sẽ không chạy sớm nếu chưa tới đúng phút đã set. Runner nền cũng dùng logic này: ví dụ lịch `05:30`, máy boot lúc `05:10` thì runner chờ tới `05:30` mới chạy.
+
+Nếu máy boot lại sau giờ lịch nhưng còn trong khoảng chạy bù mặc định 180 phút, runner nền sẽ chạy bù slot đó.
 
 ## Telegram nhiều người nhận
 

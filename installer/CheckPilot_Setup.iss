@@ -1,12 +1,12 @@
 [Setup]
 AppName=CheckPilot
-AppVersion=2.5.4
+AppVersion=2.5.5
 AppPublisher=Pham Duy
 AppPublisherURL=https://github.com/TroniePh/checkpilot
 DefaultDirName={autopf}\CheckPilot
 DefaultGroupName=CheckPilot
 OutputDir=..\installer_output
-OutputBaseFilename=CheckPilot_Setup_v2.5.4
+OutputBaseFilename=CheckPilot_Setup_v2.5.5
 SetupIconFile=..\assets\icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes

@@ -358,7 +358,10 @@ def run_if_due(force: bool = False, quiet: bool = False) -> Optional[bool]:
                 else:
                     _log(f"Không có lịch hợp lệ ({reason}).")
             return None
-        _log(f"Đúng lịch {scheduled_time}. Bắt đầu Auto Mode.")
+        if reason == "missed":
+            _log(f"Missed schedule {scheduled_time}; running catch-up Auto Mode.")
+        else:
+            _log(f"Đúng lịch {scheduled_time}. Bắt đầu Auto Mode.")
         mark_schedule_run(schedule, scheduled_time)
     else:
         _log("Force run: bỏ qua kiểm tra giờ lịch.")

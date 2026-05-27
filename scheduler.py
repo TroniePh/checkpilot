@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 SCHEDULE_FILE = os.path.join(DATA_DIR, "schedule.json")
 DAY_MAP = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+DEFAULT_MISSED_GRACE_MINUTES = 180
 
 
 def load_schedule() -> dict:
@@ -35,6 +36,7 @@ def load_schedule() -> dict:
         "times": ["05:00"],
         "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
         "auto_date_today": True,
+        "missed_grace_minutes": DEFAULT_MISSED_GRACE_MINUTES,
         "runs_today": [],
     }
 
@@ -79,8 +81,16 @@ def _reset_runs_if_new_day(config: dict, now: Optional[datetime] = None) -> list
     return runs_today
 
 
+def _missed_grace_minutes(config: dict) -> int:
+    try:
+        value = int(config.get("missed_grace_minutes", DEFAULT_MISSED_GRACE_MINUTES))
+    except Exception:
+        value = DEFAULT_MISSED_GRACE_MINUTES
+    return max(0, min(value, 24 * 60))
+
+
 def is_schedule_due_now(config: dict, now: Optional[datetime] = None) -> tuple:
-    """Return (due, scheduled_time, reason) for the current minute."""
+    """Return (due, scheduled_time, reason) for current or recently missed slots."""
     now = now or datetime.now()
     if not config.get("enabled", False):
         return False, "", "schedule disabled"
@@ -90,13 +100,33 @@ def is_schedule_due_now(config: dict, now: Optional[datetime] = None) -> tuple:
 
     runs_today = _reset_runs_if_new_day(config, now)
     current_time = now.strftime("%H:%M")
-    if current_time not in _valid_times(config):
+    times = _valid_times(config)
+    if current_time in times:
+        time_key = f"{now.date().isoformat()}T{current_time}"
+        if time_key in runs_today:
+            return False, current_time, "already ran"
+        return True, current_time, "due"
+
+    grace = _missed_grace_minutes(config)
+    if grace <= 0:
         return False, "", "not scheduled minute"
 
-    time_key = f"{now.date().isoformat()}T{current_time}"
-    if time_key in runs_today:
-        return False, current_time, "already ran"
-    return True, current_time, "due"
+    missed = []
+    for value in times:
+        hour, minute = map(int, value.split(":"))
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if target > now:
+            continue
+        if now - target > timedelta(minutes=grace):
+            continue
+        time_key = f"{now.date().isoformat()}T{value}"
+        if time_key not in runs_today:
+            missed.append((target, value))
+
+    if missed:
+        _, scheduled_time = max(missed, key=lambda item: item[0])
+        return True, scheduled_time, "missed"
+    return False, "", "not scheduled minute"
 
 
 def mark_schedule_run(config: dict, scheduled_time: str, now: Optional[datetime] = None):
@@ -182,12 +212,15 @@ class Scheduler:
     def _check_trigger(self):
         """Check if it's time to run (supports multiple times per day)."""
         now = datetime.now()
-        due, scheduled_time, _ = is_schedule_due_now(self.config, now)
+        due, scheduled_time, reason = is_schedule_due_now(self.config, now)
         if not due:
             save_schedule(self.config)
             return
 
-        self._log(f"Scheduled run triggered at {now.strftime('%H:%M')}")
+        if reason == "missed":
+            self._log(f"Missed schedule {scheduled_time}; running catch-up at {now.strftime('%H:%M')}")
+        else:
+            self._log(f"Scheduled run triggered at {now.strftime('%H:%M')}")
         mark_schedule_run(self.config, scheduled_time, now)
         try:
             self.run_callback()
