@@ -56,7 +56,7 @@ App lưu lại file dữ liệu và thư mục ảnh đã chọn để Scheduler
 - Không submit nếu có item error.
 - Không submit nếu upload ảnh bắt buộc lỗi.
 - Chụp screenshot và lưu HTML dump khi lỗi quan trọng.
-- Chặn Auto Mode với template chưa từng chạy Test mode thành công.
+- Template lock chỉ dùng để cảnh báo/setup; Auto Mode không bị chặn nếu CSV đã validate OK.
 - Run lock theo ngày để tránh submit trùng template/site trong cùng ngày.
 - Health check trước khi chạy automation.
 - Report HTML sau mỗi inspection.

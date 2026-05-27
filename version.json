@@ -1,6 +1,6 @@
 {
-  "version": "2.5.3",
-  "release_date": "2026-05-26",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.5.3/CheckPilot_Setup_v2.5.3.exe",
-  "changelog": "v2.5.3: Stabilized SafetyCulture automation retries, fixed photo upload targeting for sushi temperature and 9AM/5PM case photos, improved error reporting, and verified all 10 Yummi Sushi templates in live fill-only mode."
+  "version": "2.5.4",
+  "release_date": "2026-05-27",
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.5.4/CheckPilot_Setup_v2.5.4.exe",
+  "changelog": "v2.5.4: Hotfix so Auto Mode and scheduler continue after validation even when template locks are stale from a CSV/app update. Template locks now warn only; item/upload guards still prevent unsafe submit."
 }

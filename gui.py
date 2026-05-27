@@ -1592,15 +1592,17 @@ class App(ctk.CTk):
 
             self._log("Health check OK")
 
-            # Template lock: every Auto submit requires tested/current templates.
+            # Template locks are setup warnings only. Production Auto Mode must
+            # not stop just because the CSV fingerprint changed after an app or
+            # customer data update; validation and per-item submit guards still
+            # block unsafe runs.
             if auto_submit:
                 invalid_templates = get_invalid_templates(self.inspections)
                 if invalid_templates:
-                    self._log(f"BLOCKED: {len(invalid_templates)} template(s) chưa test hoặc CSV đã đổi:")
+                    self._log(f"WARN: {len(invalid_templates)} template(s) chưa test hoặc CSV đã đổi:")
                     for t in invalid_templates:
                         self._log(f"  - {t}")
-                    self._log("Chạy Test mode lại cho các template này trước khi Auto submit.")
-                    return
+                    self._log("Auto Mode vẫn tiếp tục sau khi Validate OK; sẽ không submit nếu có lỗi item/upload.")
 
             if auto_submit:
                 remaining = get_remaining(self.inspections)

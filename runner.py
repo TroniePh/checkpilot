@@ -192,11 +192,10 @@ def execute_auto_run() -> bool:
 
     invalid_templates = get_invalid_templates(inspections)
     if invalid_templates:
-        _send_blocking_error(
-            "Auto Mode bị chặn vì template chưa test hoặc CSV đã đổi:\n" +
+        _log(
+            "WARN: Template locks are not current; runner continues after validation OK:\n" +
             "\n".join(f"- {t}" for t in invalid_templates)
         )
-        return False
 
     run_list = get_remaining(inspections)
     skipped = len(inspections) - len(run_list)

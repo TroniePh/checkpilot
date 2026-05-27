@@ -1,6 +1,13 @@
 # Changelog — CheckPilot™
 
-## v2.5.3 (unreleased)
+## v2.5.4 (2026-05-27)
+
+- Hotfix: Auto Mode and scheduler no longer block on stale template locks after CSV/app updates.
+- Template locks now warn only; validation and item/upload submit guards still prevent unsafe submit.
+
+---
+
+## v2.5.3 (2026-05-26)
 
 - Added same-template retry when SafetyCulture shows the transient "An error has occurred" popup.
 - Added safer draft cleanup after blocked/fatal automation errors so the next template starts from a clean page.
