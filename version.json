@@ -1,6 +1,6 @@
 {
-  "version": "2.5.7",
+  "version": "2.5.8",
   "release_date": "2026-05-27",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.5.7/CheckPilot_Setup_v2.5.7.exe",
-  "changelog": "v2.5.7: Fixes missed-slot catch-up order, hardens GUI updates from scheduler/worker threads, and keeps template-time scheduling with SKIP answers for Yummi Sushi."
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.5.8/CheckPilot_Setup_v2.5.8.exe",
+  "changelog": "v2.5.8: Keeps Auto Mode armed after each scheduled slot, automatically waits for the next template time after completion, and auto-enters schedule wait mode on startup/reboot."
 }
