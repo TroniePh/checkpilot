@@ -1,6 +1,6 @@
 {
-  "version": "2.5.8",
-  "release_date": "2026-05-27",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.5.8/CheckPilot_Setup_v2.5.8.exe",
-  "changelog": "v2.5.8: Keeps Auto Mode armed after each scheduled slot, automatically waits for the next template time after completion, and auto-enters schedule wait mode on startup/reboot."
+  "version": "2.5.9",
+  "release_date": "2026-05-28",
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.5.9/CheckPilot_Setup_v2.5.9.exe",
+  "changelog": "v2.5.9: Sends Telegram proof screenshots after each template is submitted and verified, so customers can see saved evidence for every completed inspection."
 }
