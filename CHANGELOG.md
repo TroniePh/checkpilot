@@ -1,5 +1,13 @@
 # Changelog — CheckPilot™
 
+## v2.6.1 (2026-06-06)
+
+- Fixed ACE Daily Food Safety Log section matching so repeated questions in `2.1`, `2.2`, and `2.3` are filled only in the intended section.
+- Kept `Title Page` questions discoverable when SafetyCulture renders them under the page heading instead of a literal `Title Page` section, including `What Type of Operation Will Occur Today?`.
+- Hardened final signature handling so CheckPilot opens `Draw signature`, draws on the actual signature pad, and confirms the dialog.
+
+---
+
 ## v2.6.0 (2026-06-06)
 
 - Fixed ACE Daily Food Safety Log store selection so `Select Your Store` chooses the real `VONS 02090 (Main)` dropdown option instead of only typing text into the field.

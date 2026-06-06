@@ -73,6 +73,8 @@ class AutomationEngine:
         self.item_errors: List[str] = []
         self.current_template = ""
         self.current_site = ""
+        self.current_section = ""
+        self.current_next_section = ""
         self.current_question = ""
         self._items_ok = 0
         self._images_uploaded = 0
@@ -877,9 +879,11 @@ class AutomationEngine:
 
             if item.section and item.section != current_section:
                 current_section = item.section
+                self.current_next_section = self._next_content_section(items, idx, current_section)
                 self._log(f"  Section: {current_section}")
                 self._scroll_to_section(current_section)
                 time.sleep(SCROLL_DELAY)
+            self.current_section = current_section or item.section
 
             self._log(f"  [{idx+1}/{total}] {item.question[:40]}... -> {item.answer}")
 
@@ -943,6 +947,41 @@ class AutomationEngine:
 
             time.sleep(STEP_DELAY)
 
+    def _next_content_section(self, items: List[InspectionItem], index: int, current_section: str) -> str:
+        for next_item in items[index + 1:]:
+            next_section = str(next_item.section or "").strip()
+            next_question = str(next_item.question or "").strip().upper()
+            next_answer = str(next_item.answer or "").strip().upper()
+            if not next_section or next_section == current_section:
+                continue
+            if next_section.lower() == "navigation" or next_question == "NEXTPAGE" or next_answer == "NEXTPAGE":
+                continue
+            return next_section
+        return ""
+
+    def _section_scope_for_item(self, item: InspectionItem) -> str:
+        section = str(item.section or "").strip()
+        if not section:
+            return ""
+
+        # SafetyCulture title/header fields are often rendered under the page
+        # heading instead of a literal "Title Page" section. Keep strict
+        # section bounds for numbered/repeated sections, but do not block these
+        # unique metadata questions when their CSV section name is synthetic.
+        compact = self._compact_text(section)
+        synthetic_sections = {
+            "titlepage",
+            "coverpage",
+            "header",
+            "general",
+            "generalinformation",
+            "information",
+            "details",
+        }
+        if compact in synthetic_sections:
+            return ""
+        return section
+
     def _answer_question(self, item: InspectionItem) -> bool:
         """
         Find question and answer it. Supports multiple field types:
@@ -960,6 +999,7 @@ class AutomationEngine:
             return True  # No answer needed
 
         question_key = self._compact_text(item.question)
+        section_scope = self._section_scope_for_item(item)
 
         # Special handling for SafetyCulture site/store pickers.
         if "siteconducted" in question_key or (
@@ -973,16 +1013,24 @@ class AutomationEngine:
 
         # Special handling for signature pads.
         if "signature" in question_key:
-            return self._answer_signature(item.question, item.answer, item.question_alias)
+            return self._answer_signature(
+                item.question, item.answer, item.question_alias,
+                section_scope, self.current_next_section,
+            )
 
         # Special handling for checkbox items (answer = TRUE means tick the checkbox)
         if item.answer.strip().upper() == "TRUE":
-            return self._tick_checkbox(item.question)
+            return self._tick_checkbox(
+                item.question, section_scope, item.question_alias,
+                self.current_next_section,
+            )
 
-        container = self._find_question_container(item.question)
+        container = self._find_question_container(item.question, section_scope, self.current_next_section)
         # Fallback: try alias
         if not container and item.question_alias:
-            container = self._find_question_container(item.question_alias)
+            container = self._find_question_container(
+                item.question_alias, section_scope, self.current_next_section,
+            )
 
         if not container:
             self._log(f"    WARN: Question not found on page")
@@ -1076,9 +1124,16 @@ class AutomationEngine:
                 pass
             return False
 
-    def _tick_checkbox(self, question: str) -> bool:
+    def _tick_checkbox(self, question: str, section: str = "", alias: str = "", next_section: str = "") -> bool:
         """Tick a checkbox next to a question text."""
         try:
+            container = self._find_question_container(question, section, next_section)
+            if not container and alias:
+                container = self._find_question_container(alias, section, next_section)
+            if container and self._click_checkbox_in_container(container):
+                self._log(f"    Checkbox ticked (section)")
+                return True
+
             q_el = self.page.locator(f'text="{question[:50]}"').first
             if q_el.count() == 0:
                 short = question[:30]
@@ -1126,6 +1181,60 @@ class AutomationEngine:
         except Exception as e:
             self._log(f"    Checkbox error: {str(e)[:40]}")
             return False
+
+    def _click_checkbox_in_container(self, container: Locator) -> bool:
+        try:
+            handle = container.evaluate_handle(
+                """
+                (root) => {
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.display !== "none" &&
+                            style.visibility !== "hidden" &&
+                            rect.width > 0 &&
+                            rect.height > 0;
+                    };
+                    const normalize = (s) => (s || "").replace(/\\s+/g, " ").trim().toLowerCase();
+                    const candidates = Array.from(root.querySelectorAll(
+                        "input[type='checkbox'], [role='checkbox'], label, button, " +
+                        "[class*='checkbox' i], [class*='check' i], [aria-checked]"
+                    ))
+                        .filter(visible)
+                        .filter((el) => {
+                            const text = normalize(el.innerText || el.textContent || "");
+                            if (/add note|attach media|create action|next page|previous page/.test(text)) return false;
+                            const rect = el.getBoundingClientRect();
+                            if (rect.width > 260 || rect.height > 120) return false;
+                            return true;
+                        })
+                        .map((el) => {
+                            const rect = el.getBoundingClientRect();
+                            const tag = el.tagName.toLowerCase();
+                            const role = normalize(el.getAttribute("role") || "");
+                            const cls = normalize(el.getAttribute("class") || "");
+                            const checked = el.checked === true ||
+                                normalize(el.getAttribute("aria-checked") || "") === "true" ||
+                                /checked|selected|active/.test(cls);
+                            const priority =
+                                checked ? 0 :
+                                tag === "input" ? 1 :
+                                role === "checkbox" ? 2 :
+                                /checkbox|check/.test(cls) ? 3 :
+                                4;
+                            return { el, priority, left: rect.left, top: rect.top, area: rect.width * rect.height };
+                        })
+                        .sort((a, b) => (a.priority - b.priority) || (a.left - b.left) || (a.top - b.top) || (a.area - b.area));
+                    return candidates.length ? candidates[0].el : null;
+                }
+                """
+            )
+            checkbox = handle.as_element()
+            if checkbox:
+                return self._click_element(checkbox)
+        except:
+            pass
+        return False
 
     def _select_site(self, site_name: str, question: str = "Site conducted", alias: str = "") -> bool:
         """Handle SafetyCulture's site/store picker dropdown."""
@@ -1186,21 +1295,24 @@ class AutomationEngine:
             self._log(f"    Site select error: {str(e)[:40]}")
             return False
 
-    def _answer_signature(self, question: str, value: str, alias: str = "") -> bool:
+    def _answer_signature(self, question: str, value: str, alias: str = "", section: str = "", next_section: str = "") -> bool:
         """Fill a signature question by typing the name and drawing on the pad."""
-        container = self._find_question_container(question)
+        container = self._find_question_container(question, section, next_section)
         if not container and alias:
-            container = self._find_question_container(alias)
+            container = self._find_question_container(alias, section, next_section)
 
         filled_name = False
         if container and str(value or "").strip():
             filled_name = self._try_fill_signature_text(container, value)
 
-        target = self._find_signature_target(question, alias)
+        target = self._find_signature_target(question, alias, section, next_section)
         if not target:
-            self._open_signature_control(question, alias, container)
-            time.sleep(0.8)
-            target = self._find_signature_target(question, alias)
+            opened = self._open_signature_control(question, alias, container)
+            time.sleep(0.6)
+            if opened and self._click_draw_signature_option():
+                self._log("    Clicked Draw signature")
+                time.sleep(1.0)
+            target = self._find_signature_target(question, alias, section, next_section)
 
         if target and self._draw_signature_on_target(target):
             self._confirm_signature_dialog()
@@ -1247,15 +1359,17 @@ class AutomationEngine:
                     continue
         return False
 
-    def _find_signature_target(self, question: str, alias: str = ""):
+    def _find_signature_target(self, question: str, alias: str = "", section: str = "", next_section: str = ""):
         try:
             handle = self.page.evaluate_handle(
                 """
-                ({question, alias}) => {
+                ({question, alias, section, nextSection}) => {
                     const normalize = (s) => (s || "").replace(/\\s+/g, " ").trim().toLowerCase();
                     const compact = (s) => normalize(s).replace(/[^a-z0-9]+/g, "");
                     const wanted = compact(question);
                     const wantedAlias = compact(alias);
+                    const wantedSection = compact(section);
+                    const wantedNextSection = compact(nextSection);
                     const partial = normalize(question).split(" ").filter(Boolean).slice(0, 7).join(" ");
                     const visible = (el) => {
                         const style = window.getComputedStyle(el);
@@ -1283,12 +1397,35 @@ class AutomationEngine:
                             (wantedAlias && cmp.includes(wantedAlias)) ||
                             (partial && text.includes(partial));
                     };
+                    const matchesSection = (el) => {
+                        if (!wantedSection) return true;
+                        let node = el;
+                        for (let depth = 0; node && node !== document.body && depth < 10; depth += 1, node = node.parentElement) {
+                            if (compact(node.innerText || node.textContent || "").includes(wantedSection)) return true;
+                        }
+                        return false;
+                    };
+                    const belowNextSection = (el) => {
+                        if (!wantedNextSection) return false;
+                        const rect = el.getBoundingClientRect();
+                        const heads = Array.from(document.querySelectorAll("h1,h2,h3,h4,[role='heading'],label,span,p,div,[data-testid]"))
+                            .filter(visible)
+                            .map((node) => ({ node, rect: node.getBoundingClientRect(), cmp: compact(node.innerText || node.textContent || "") }))
+                            .filter((c) => c.cmp.includes(wantedNextSection) && c.rect.top > -100)
+                            .sort((a, b) => a.rect.top - b.rect.top);
+                        if (!heads.length) return false;
+                        return rect.top >= heads[0].rect.top - 10;
+                    };
                     const targetSelector = [
                         "canvas",
-                        "[data-testid*='signature' i]",
-                        "[class*='signature' i]",
-                        "[aria-label*='signature' i]",
-                        "[title*='signature' i]"
+                        "[data-testid*='signature-pad' i]",
+                        "[data-testid*='signature_canvas' i]",
+                        "[data-testid*='signature-canvas' i]",
+                        "[class*='signature-pad' i]",
+                        "[class*='signature_canvas' i]",
+                        "[class*='signature-canvas' i]",
+                        "[aria-label*='signature pad' i]",
+                        "[title*='signature pad' i]"
                     ].join(",");
                     const signatureTargetsIn = (root) => [root, ...Array.from(root.querySelectorAll(targetSelector))]
                         .filter(visible)
@@ -1296,15 +1433,20 @@ class AutomationEngine:
                             const rect = el.getBoundingClientRect();
                             const tag = el.tagName.toLowerCase();
                             const text = textOf(el);
+                            const meta = `${el.className || ""} ${el.getAttribute("data-testid") || ""} ${el.getAttribute("aria-label") || ""}`;
+                            const hasCanvas = !!el.querySelector("canvas");
+                            const menuText = /\\b(add signature|draw signature|upload signature)\\b/i.test(text);
                             const looksSignature = tag === "canvas" ||
-                                /signature|sign here|tap to sign|draw/i.test(text) ||
-                                /signature/i.test(`${el.className || ""} ${el.getAttribute("data-testid") || ""}`);
-                            return { el, rect, tag, looksSignature };
+                                hasCanvas ||
+                                /signature[-_ ]?(pad|canvas)|signing[-_ ]?(pad|canvas)|draw[-_ ]?area/i.test(meta);
+                            return { el, rect, tag, hasCanvas, menuText, looksSignature };
                         })
-                        .filter((c) => c.looksSignature && c.rect.width >= 120 && c.rect.height >= 55)
+                        .filter((c) => c.looksSignature && !c.menuText && c.rect.width >= 180 && c.rect.height >= 90)
                         .sort((a, b) => {
                             if (a.tag === "canvas" && b.tag !== "canvas") return -1;
                             if (a.tag !== "canvas" && b.tag === "canvas") return 1;
+                            if (a.hasCanvas && !b.hasCanvas) return -1;
+                            if (!a.hasCanvas && b.hasCanvas) return 1;
                             return (a.rect.width * a.rect.height) - (b.rect.width * b.rect.height);
                         })
                         .map((c) => c.el);
@@ -1328,6 +1470,8 @@ class AutomationEngine:
                         let node = match.el;
                         for (let depth = 0; node && node !== document.body && depth < 9; depth += 1, node = node.parentElement) {
                             if (!visible(node)) continue;
+                            if (!matchesSection(node)) continue;
+                            if (belowNextSection(node)) continue;
                             const rect = node.getBoundingClientRect();
                             if (rect.height > 900 || rect.width > 1300) break;
                             const targets = signatureTargetsIn(node);
@@ -1343,11 +1487,73 @@ class AutomationEngine:
                     return fallback.length ? fallback[0] : null;
                 }
                 """,
-                {"question": question, "alias": alias},
+                {"question": question, "alias": alias, "section": section, "nextSection": next_section},
             )
             return handle.as_element()
         except:
             return None
+
+    def _click_draw_signature_option(self) -> bool:
+        try:
+            handle = self.page.evaluate_handle(
+                """
+                () => {
+                    const normalize = (s) => (s || "").replace(/\\s+/g, " ").trim();
+                    const lower = (s) => normalize(s).toLowerCase();
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.display !== "none" &&
+                            style.visibility !== "hidden" &&
+                            rect.width > 0 &&
+                            rect.height > 0 &&
+                            rect.bottom >= 0 &&
+                            rect.top <= window.innerHeight &&
+                            rect.right >= 0 &&
+                            rect.left <= window.innerWidth;
+                    };
+                    const textOf = (el) => normalize([
+                        el.innerText,
+                        el.textContent,
+                        el.getAttribute("aria-label"),
+                        el.getAttribute("title"),
+                        el.getAttribute("data-testid"),
+                    ].filter(Boolean).join(" "));
+                    const scopes = Array.from(document.querySelectorAll("[role='dialog'], [class*='modal']"))
+                        .filter(visible);
+                    scopes.push(document.body);
+                    for (const scope of scopes) {
+                        const candidates = Array.from(scope.querySelectorAll(
+                            "button,a,[role='button'],[role='menuitem'],[tabindex],[aria-label],[data-testid],div,span"
+                        ))
+                            .filter(visible)
+                            .map((el) => {
+                                const rect = el.getBoundingClientRect();
+                                const text = lower(textOf(el));
+                                const exact = text === "draw signature";
+                                const draw = /\\bdraw signature\\b/.test(text);
+                                const upload = /\\bupload signature\\b/.test(text);
+                                return { el, rect, text, exact, draw, upload };
+                            })
+                            .filter((c) => c.draw && !c.upload)
+                            .filter((c) => c.rect.width <= 500 && c.rect.height <= 180)
+                            .sort((a, b) => {
+                                if (a.exact && !b.exact) return -1;
+                                if (!a.exact && b.exact) return 1;
+                                return (a.rect.width * a.rect.height) - (b.rect.width * b.rect.height);
+                            });
+                        if (candidates.length) return candidates[0].el;
+                    }
+                    return null;
+                }
+                """
+            )
+            option = handle.as_element()
+            if option:
+                return self._click_element(option)
+        except:
+            pass
+        return False
 
     def _open_signature_control(self, question: str, alias: str = "", container: Optional[Locator] = None) -> bool:
         try:
@@ -1419,16 +1625,51 @@ class AutomationEngine:
 
     def _draw_signature_on_target(self, target) -> bool:
         try:
-            target.scroll_into_view_if_needed(timeout=3000)
+            handle = target.evaluate_handle(
+                """
+                (el) => {
+                    if (el.tagName && el.tagName.toLowerCase() === "canvas") return el;
+                    const canvas = el.querySelector && el.querySelector("canvas");
+                    return canvas || el;
+                }
+                """
+            )
+            draw_target = handle.as_element() or target
+        except:
+            draw_target = target
+
+        try:
+            draw_target.scroll_into_view_if_needed(timeout=3000)
         except:
             pass
         try:
-            before = target.evaluate(
+            drawable = draw_target.evaluate(
+                """
+                (el) => {
+                    const tag = el.tagName ? el.tagName.toLowerCase() : "";
+                    const rect = el.getBoundingClientRect();
+                    const text = (el.innerText || el.textContent || "").replace(/\\s+/g, " ").trim().toLowerCase();
+                    const meta = `${el.className || ""} ${el.getAttribute("data-testid") || ""} ${el.getAttribute("aria-label") || ""}`.toLowerCase();
+                    if (/\\b(add signature|draw signature|upload signature)\\b/.test(text)) return false;
+                    if (tag === "canvas") return rect.width >= 120 && rect.height >= 70;
+                    return rect.width >= 220 &&
+                        rect.height >= 100 &&
+                        /signature[-_ ]?(pad|canvas)|signing[-_ ]?(pad|canvas)|draw[-_ ]?area/.test(meta);
+                }
+                """
+            )
+            if not drawable:
+                return False
+        except:
+            return False
+
+        try:
+            before = draw_target.evaluate(
                 "(el) => el.tagName && el.tagName.toLowerCase() === 'canvas' ? el.toDataURL() : ''"
             )
         except:
             before = ""
-        box = target.bounding_box()
+        box = draw_target.bounding_box()
         if not box or box["width"] < 80 or box["height"] < 45:
             return False
 
@@ -1451,14 +1692,14 @@ class AutomationEngine:
         time.sleep(0.5)
 
         try:
-            after = target.evaluate(
+            after = draw_target.evaluate(
                 "(el) => el.tagName && el.tagName.toLowerCase() === 'canvas' ? el.toDataURL() : ''"
             )
             if before and after:
                 return before != after
         except:
             pass
-        return True
+        return not before
 
     def _confirm_signature_dialog(self) -> bool:
         return self._click_dialog_button([
@@ -1950,13 +2191,24 @@ class AutomationEngine:
             pass
         return False
 
-    def _find_question_container(self, question: str) -> Optional[Locator]:
+    def _find_question_container(self, question: str, section: str = "", next_section: str = "") -> Optional[Locator]:
         """Find the container element that wraps a question and its answer controls."""
         deadline = time.time() + 10
         while time.time() < deadline:
-            container = self._find_question_container_js(question)
+            container = self._find_question_container_js(question, section, next_section)
             if container:
                 return container
+
+            # With duplicate question labels, an unscoped fallback can answer
+            # the same label in the next section. Prefer a visible failure over
+            # filling the wrong SafetyCulture card.
+            if section:
+                try:
+                    self._scroll_to_section(section)
+                except:
+                    pass
+                time.sleep(0.5)
+                continue
 
             q_el = None
             # Try exact match first
@@ -2012,7 +2264,7 @@ class AutomationEngine:
         self._log(f"    DEBUG: visible questions: {self._visible_question_debug_texts()}")
         return None
 
-    def _find_question_container_js(self, question: str) -> Optional[Locator]:
+    def _find_question_container_js(self, question: str, section: str = "", next_section: str = "") -> Optional[Locator]:
         """
         SafetyCulture often renders required questions as split text nodes,
         for example "* Did you Produce Hot Food Today?". Text selectors can miss
@@ -2022,7 +2274,7 @@ class AutomationEngine:
         try:
             marker = self.page.evaluate(
                 """
-                (question) => {
+                ({question, section, nextSection}) => {
                     const normalize = (s) => (s || "")
                         .replace(/\\s+/g, " ")
                         .replace(/^\\*\\s*/, "")
@@ -2031,6 +2283,9 @@ class AutomationEngine:
                     const compact = (s) => normalize(s).replace(/[^a-z0-9]+/g, "");
                     const wanted = normalize(question);
                     const wantedCompact = compact(question);
+                    const wantedSection = normalize(section);
+                    const wantedSectionCompact = compact(section);
+                    const wantedNextSectionCompact = compact(nextSection);
                     const visible = (el) => {
                         const style = window.getComputedStyle(el);
                         const rect = el.getBoundingClientRect();
@@ -2040,6 +2295,14 @@ class AutomationEngine:
                             rect.height > 0 &&
                             rect.bottom >= 0 &&
                             rect.top <= window.innerHeight;
+                    };
+                    const rendered = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.display !== "none" &&
+                            style.visibility !== "hidden" &&
+                            rect.width > 0 &&
+                            rect.height > 0;
                     };
                     const textOf = (el) => normalize(el.innerText || el.textContent || "");
                     const directTextOf = (el) => normalize(Array.from(el.childNodes)
@@ -2058,25 +2321,75 @@ class AutomationEngine:
                                 (wantedCompact.length >= 10 && textCompact.includes(wantedCompact));
                         });
                     };
+                    const findSectionAnchor = (wantedCmp) => {
+                        if (!wantedCmp) return null;
+                        const sectionSelector = [
+                            "h1", "h2", "h3", "h4", "[role='heading']",
+                            "label", "span", "p", "div", "[data-testid]"
+                        ].join(",");
+                        const matches = Array.from(document.querySelectorAll(sectionSelector))
+                            .filter(rendered)
+                            .map((el) => {
+                                const text = textOf(el);
+                                const cmp = compact(text);
+                                const rect = el.getBoundingClientRect();
+                                const exact = cmp === wantedCmp;
+                                const starts = cmp.startsWith(wantedCmp);
+                                const contains = cmp.includes(wantedCmp);
+                                return { el, text, cmp, rect, exact, starts, contains };
+                            })
+                            .filter((c) => c.contains && c.cmp.length >= Math.min(8, wantedCmp.length))
+                            .filter((c) => !/add note|attach media|create action|previous page|next page/i.test(c.text))
+                            .sort((a, b) => {
+                                if (a.exact && !b.exact) return -1;
+                                if (!a.exact && b.exact) return 1;
+                                if (a.starts && !b.starts) return -1;
+                                if (!a.starts && b.starts) return 1;
+                                return (Math.abs(a.rect.top) - Math.abs(b.rect.top)) ||
+                                    (a.text.length - b.text.length);
+                            });
+                        return matches.length ? matches[0] : null;
+                    };
+                    const sectionAnchor = findSectionAnchor(wantedSectionCompact);
+                    if (wantedSectionCompact && !sectionAnchor) return "";
+                    const nextSectionAnchor = (() => {
+                        if (!sectionAnchor) return null;
+                        const anchor = findSectionAnchor(wantedNextSectionCompact);
+                        if (!anchor) return null;
+                        return anchor.rect.top > sectionAnchor.rect.top + 10 ? anchor : null;
+                    })();
                     const selector = [
                         "label", "span", "p", "div", "h1", "h2", "h3", "h4",
                         "[data-testid]", "[role='heading']"
                     ].join(",");
                     let best = null;
-                    let bestArea = Number.MAX_SAFE_INTEGER;
+                    let bestScore = Number.MAX_SAFE_INTEGER;
                     for (const node of Array.from(document.querySelectorAll(selector))) {
-                        if (!visible(node) || !matchesQuestion(node)) continue;
+                        if (!rendered(node) || !matchesQuestion(node)) continue;
+                        const nodeRect = node.getBoundingClientRect();
+                        if (sectionAnchor && nodeRect.top < sectionAnchor.rect.top - 20) continue;
+                        if (nextSectionAnchor && nodeRect.top >= nextSectionAnchor.rect.top - 10) continue;
                         let el = node;
                         for (let depth = 0; depth < 8 && el; depth += 1, el = el.parentElement) {
-                            if (!visible(el) || !hasControls(el)) continue;
+                            if (!rendered(el) || !hasControls(el)) continue;
                             const rect = el.getBoundingClientRect();
                             const area = rect.width * rect.height;
                             if (area <= 0 || area > 700000) continue;
+                            if (sectionAnchor && rect.top < sectionAnchor.rect.top - 20) continue;
+                            if (nextSectionAnchor && rect.top >= nextSectionAnchor.rect.top - 10) continue;
                             const text = textOf(el);
                             if (!compact(text).includes(wantedCompact)) continue;
-                            if (area < bestArea) {
+
+                            let score = area;
+                            if (sectionAnchor) {
+                                const distance = Math.max(0, rect.top - sectionAnchor.rect.top);
+                                score = distance * 10000 + area;
+                                const scopeText = compact(el.innerText || el.textContent || "");
+                                if (scopeText.includes(wantedSectionCompact)) score -= 5000000;
+                            }
+                            if (score < bestScore) {
                                 best = el;
-                                bestArea = area;
+                                bestScore = score;
                             }
                             break;
                         }
@@ -2087,7 +2400,7 @@ class AutomationEngine:
                     return id;
                 }
                 """,
-                question,
+                {"question": question, "section": section, "nextSection": next_section},
             )
             if not marker:
                 return None
