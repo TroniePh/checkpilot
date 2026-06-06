@@ -20,12 +20,12 @@ from config import (
     SC_TEMPLATE_FOLDER_URL, SC_TEMPLATE_FOLDER_NAME,
     MAX_RETRIES, RETRY_DELAY, SCREENSHOT_DIR, LOG_DIR, BROWSERS_DIR,
 )
-from data_loader import InspectionData, InspectionItem
+from data_loader import InspectionData, InspectionItem, is_no_answer
 from session_manager import (
     has_saved_session, save_session_state, get_session_state_path,
-    has_saved_credentials, load_credentials,
+    has_saved_credentials, load_credentials, get_account_profile,
 )
-from notifier import send_error_alert, send_success_report
+from notifier import send_error_alert
 from app_settings import load_app_settings
 
 logger = logging.getLogger(__name__)
@@ -52,6 +52,9 @@ class AutomationEngine:
         log_callback: Optional[Callable[[str], None]] = None,
         force_headless: Optional[bool] = None,
         allow_manual_login: bool = True,
+        account_name: str = "",
+        template_folder_url: str = "",
+        template_folder_name: str = "",
     ):
         self.playwright = None
         self.browser: Optional[Browser] = None
@@ -60,6 +63,10 @@ class AutomationEngine:
         self.log_callback = log_callback or (lambda msg: None)
         self.force_headless = force_headless
         self.allow_manual_login = allow_manual_login
+        self.account_name = str(account_name or "").strip()
+        profile = get_account_profile(self.account_name)
+        self.template_folder_url = (template_folder_url or profile.get("template_folder_url", "") or "").strip()
+        self.template_folder_name = (template_folder_name or profile.get("template_folder_name", "") or "").strip()
         self._browser_headless = BROWSER_HEADLESS
         self._paused = False
         self._stopped = False
@@ -81,7 +88,7 @@ class AutomationEngine:
             headless=headless, slow_mo=BROWSER_SLOW_MO,
             args=["--start-maximized", "--force-device-scale-factor=1", "--disable-extensions"],
         )
-        session_path = get_session_state_path()
+        session_path = get_session_state_path(self.account_name)
         ctx_args = {"viewport": {"width": 1366, "height": 900}, "locale": "en-US"}
         if session_path:
             self._log("Restoring saved session...")
@@ -97,7 +104,7 @@ class AutomationEngine:
     def close_browser(self):
         try:
             if self.page and self._is_logged_in():
-                save_session_state(self.page)
+                save_session_state(self.page, self.account_name)
         except: pass
         try:
             if self.context: self.context.close()
@@ -136,7 +143,10 @@ class AutomationEngine:
 
     # ── Login ──
     def wait_for_login(self):
-        self._log("Opening SafetyCulture login...")
+        if self.account_name:
+            self._log(f"Opening SafetyCulture login for account: {self.account_name}")
+        else:
+            self._log("Opening SafetyCulture login...")
 
         # Always go to login page directly - don't rely on saved session
         self.page.goto(SC_LOGIN_URL, wait_until="domcontentloaded")
@@ -153,8 +163,8 @@ class AutomationEngine:
         # We're on login page - login with credentials
         self._log("Logging in to SafetyCulture...")
 
-        if has_saved_credentials():
-            creds = load_credentials()
+        if has_saved_credentials(self.account_name):
+            creds = load_credentials(self.account_name)
             if creds:
                 self._log(f"  Using saved credentials: {creds[0][:3]}***")
                 if self._auto_fill_login(creds[0], creds[1]):
@@ -164,13 +174,13 @@ class AutomationEngine:
                             timeout=30000)
                         time.sleep(3)
                         self._log("Login OK!")
-                        save_session_state(self.page)
+                        save_session_state(self.page, self.account_name)
                         return
                     except PWTimeout:
                         current = self.page.url
                         if "safetyculture.com" in current and "auth." not in current and "/login" not in current:
                             self._log("Login OK (delayed)")
-                            save_session_state(self.page)
+                            save_session_state(self.page, self.account_name)
                             return
                         self._log("Auto-login failed.")
 
@@ -188,7 +198,7 @@ class AutomationEngine:
                 timeout=300000)
             time.sleep(3)
             self._log("Login OK")
-            save_session_state(self.page)
+            save_session_state(self.page, self.account_name)
         except PWTimeout:
             raise RuntimeError("Login timeout")
 
@@ -372,6 +382,12 @@ class AutomationEngine:
         self._items_ok = 0
         self._images_uploaded = 0
         self._images_failed = 0
+        prev_folder_url = self.template_folder_url
+        prev_folder_name = self.template_folder_name
+        if getattr(data, "template_folder_url", ""):
+            self.template_folder_url = data.template_folder_url.strip()
+        if getattr(data, "template_folder_name", ""):
+            self.template_folder_name = data.template_folder_name.strip()
 
         try:
             self._check_state()
@@ -421,8 +437,6 @@ class AutomationEngine:
             # Safe to submit
             self._complete_inspection()
             self._log("Submitted OK")
-            send_success_report(data.template_name, data.site_location,
-                              len(data.items), len(self.item_errors))
             return True
 
         except SafetyCultureTransientError:
@@ -443,37 +457,73 @@ class AutomationEngine:
             logger.exception("Inspection failed")
             self._abandon_current_inspection("fatal")
             return False
+        finally:
+            self.template_folder_url = prev_folder_url
+            self.template_folder_name = prev_folder_name
 
-    def verify_inspection_saved(self, template_name: str) -> bool:
+    def verify_inspection_saved(self, template_name: str, data: Optional[InspectionData] = None) -> bool:
         self._log("Verifying saved...")
-        time.sleep(2.0)
-        self._go_to_inspections()
-        time.sleep(PAGE_LOAD_WAIT)
-        found = self.page.locator(f'text="{template_name}"').first
-        if found.count() > 0:
-            self._log("Verified in list")
-            return True
-        self._log("Not found in list (may sync later)")
-        return False
+        prev_folder_url = self.template_folder_url
+        prev_folder_name = self.template_folder_name
+        if data is not None:
+            if getattr(data, "template_folder_url", ""):
+                self.template_folder_url = data.template_folder_url.strip()
+            if getattr(data, "template_folder_name", ""):
+                self.template_folder_name = data.template_folder_name.strip()
+        try:
+            time.sleep(2.0)
+            self._go_to_inspections()
+            time.sleep(PAGE_LOAD_WAIT)
+            found = self.page.locator(f'text="{template_name}"').first
+            if found.count() > 0:
+                self._log("Verified in list")
+                return True
+            self._log("Not found in list (may sync later)")
+            return False
+        finally:
+            self.template_folder_url = prev_folder_url
+            self.template_folder_name = prev_folder_name
 
     # ── Navigation ──
+    def capture_success_screenshot(self, template_name: str = "") -> Optional[str]:
+        """Capture evidence after submit/verify so Telegram can show proof."""
+        try:
+            os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_template = re.sub(r"[^A-Za-z0-9_-]+", "_", template_name or "inspection").strip("_")
+            safe_template = safe_template[:60] or "inspection"
+            path = os.path.join(SCREENSHOT_DIR, f"success_{stamp}_{safe_template}.png")
+            self.page.screenshot(path=path)
+            self._log(f"    Success screenshot: {path}")
+            return path
+        except Exception as e:
+            self._log(f"    Success screenshot failed: {str(e)[:80]}")
+            return None
+
     def _go_to_inspections(self):
         """Navigate to Templates page and open the correct folder."""
         from config import SC_TEMPLATES_URL
         from autostart import load_autostart_config
 
-        # Get folder name from config
         acfg = load_autostart_config()
-        folder_name = acfg.get("template_folder_name", "") or SC_TEMPLATE_FOLDER_NAME
+        # Named account profiles should not inherit the default account's
+        # saved template folder. If the profile/CSV does not specify a folder,
+        # open the generic Templates page and search there.
+        use_global_folder = not self.account_name
+        folder_name = self.template_folder_name
+        folder_url = self.template_folder_url
+        if use_global_folder:
+            folder_name = folder_name or acfg.get("template_folder_name", "") or SC_TEMPLATE_FOLDER_NAME
+            folder_url = folder_url or acfg.get("template_folder_url", "").strip() or SC_TEMPLATE_FOLDER_URL
 
         # If a direct folder URL is saved, use it
-        folder_url = acfg.get("template_folder_url", "").strip() or SC_TEMPLATE_FOLDER_URL
+        target_url = folder_url if folder_url and "safetyculture.com" in folder_url else SC_TEMPLATES_URL
         if folder_url and "safetyculture.com" in folder_url:
             self._log(f"Navigating to saved folder URL...")
-            self.page.goto(folder_url, timeout=30000)
+            self.page.goto(target_url, timeout=30000)
         else:
             self._log("Navigating to Templates...")
-            self.page.goto(SC_TEMPLATES_URL, timeout=30000)
+            self.page.goto(target_url, timeout=30000)
 
         try:
             self.page.wait_for_load_state("networkidle", timeout=15000)
@@ -485,7 +535,7 @@ class AutomationEngine:
         if "auth." in self.page.url or "/login" in self.page.url:
             self._log("  Session expired - re-logging in...")
             self.wait_for_login()
-            self.page.goto(SC_TEMPLATES_URL, timeout=30000)
+            self.page.goto(target_url, timeout=30000)
             time.sleep(PAGE_LOAD_WAIT + 1)
 
         # If we need to click into a folder
@@ -904,16 +954,26 @@ class AutomationEngine:
         - Datetime picker: set time
         Returns True if successful.
         """
-        if not item.answer.strip():
+        if not item.answer.strip() or is_no_answer(item.answer):
+            if is_no_answer(item.answer):
+                self._log("    Skip answer by config")
             return True  # No answer needed
 
-        # Special handling for "Site conducted" SafetyCulture site picker.
-        if "site conducted" in item.question.lower():
-            return self._select_site(item.answer)
+        question_key = self._compact_text(item.question)
+
+        # Special handling for SafetyCulture site/store pickers.
+        if "siteconducted" in question_key or (
+            question_key.startswith("selectyourstore") and "region" not in question_key
+        ):
+            return self._select_site(item.answer, item.question, item.question_alias)
 
         # Special handling for "Conducted on" datetime picker.
         if "conducted on" in item.question.lower():
             return self._set_conducted_time(item.answer)
+
+        # Special handling for signature pads.
+        if "signature" in question_key:
+            return self._answer_signature(item.question, item.answer, item.question_alias)
 
         # Special handling for checkbox items (answer = TRUE means tick the checkbox)
         if item.answer.strip().upper() == "TRUE":
@@ -1067,43 +1127,347 @@ class AutomationEngine:
             self._log(f"    Checkbox error: {str(e)[:40]}")
             return False
 
-    def _select_site(self, site_name: str) -> bool:
-        """Handle SafetyCulture's site picker dropdown."""
+    def _select_site(self, site_name: str, question: str = "Site conducted", alias: str = "") -> bool:
+        """Handle SafetyCulture's site/store picker dropdown."""
         try:
-            # Click the "Select" placeholder or the site conducted field
-            select_btn = self.page.locator('text="Site conducted"').locator("xpath=following::*[contains(@class,'select') or contains(text(),'Select') or @role='combobox']").first
-            if select_btn.count() == 0:
-                select_btn = self.page.locator('[placeholder="Select"], [class*="site-select"], [aria-label*="Site"]').first
-            if select_btn.count() == 0:
-                select_btn = self.page.locator('text="Select"').first
+            label = "Store" if "store" in (question or "").lower() else "Site"
+            container = self._find_question_container(question) if question else None
+            if not container and alias:
+                container = self._find_question_container(alias)
 
-            if select_btn.count() > 0:
-                select_btn.click()
-                time.sleep(1)
-
-            # Type in search box if visible
-            search = self.page.locator('input[placeholder*="Search"], input[placeholder*="search"], input[type="search"]').first
-            if search.count() > 0 and search.is_visible():
-                search.fill("")
-                search.type(site_name[:15], delay=30)
-                time.sleep(1.5)
-
-            # Click the matching option
-            option = self.page.locator(f'text="{site_name}"').first
-            if option.count() == 0:
-                option = self.page.locator(f'//*[contains(text(), "{site_name[:20]}")]').first
-
-            if option.count() > 0:
-                option.click()
-                time.sleep(0.5)
-                self._log(f"    Site selected: {site_name}")
+            if container and self._try_select_dropdown(container, site_name):
+                self._log(f"    {label} selected: {site_name}")
                 return True
 
-            self._log(f"    WARN: Site option not found: {site_name}")
+            # Fallback for older SafetyCulture site fields outside the question
+            # container. Search by the label, open the nearest combobox, then
+            # select an option from the global dropdown portal.
+            label_text = question or "Site conducted"
+            q_el = self.page.get_by_text(label_text[:60], exact=False).first
+            if q_el.count() > 0:
+                q_el.scroll_into_view_if_needed()
+                time.sleep(0.3)
+                control = q_el.locator(
+                    "xpath=following::*[@role='combobox' or contains(@class,'select') or "
+                    "contains(@aria-label,'Site') or contains(@aria-label,'Store') or "
+                    "contains(text(),'Select')][1]"
+                ).first
+                if control.count() > 0 and control.is_visible():
+                    control.click()
+                    time.sleep(0.6)
+
+            for term in self._dropdown_search_terms(site_name):
+                search = self.page.locator(
+                    'input[placeholder*="Search"], input[placeholder*="search"], '
+                    'input[type="search"], input[role="combobox"]'
+                ).first
+                if search.count() > 0 and search.is_visible():
+                    try:
+                        search.fill("")
+                        search.type(term, delay=30)
+                        time.sleep(0.8)
+                    except:
+                        pass
+                if self._select_open_dropdown_option(site_name, timeout=2.5):
+                    self._log(f"    {label} selected: {site_name}")
+                    return True
+                try:
+                    self.page.keyboard.press("Enter")
+                    time.sleep(0.5)
+                    if container and self._verify_container_has_answer(container, site_name):
+                        self._log(f"    {label} selected: {site_name}")
+                        return True
+                except:
+                    pass
+
+            self._log(f"    WARN: {label} option not found: {site_name}")
             return False
         except Exception as e:
             self._log(f"    Site select error: {str(e)[:40]}")
             return False
+
+    def _answer_signature(self, question: str, value: str, alias: str = "") -> bool:
+        """Fill a signature question by typing the name and drawing on the pad."""
+        container = self._find_question_container(question)
+        if not container and alias:
+            container = self._find_question_container(alias)
+
+        filled_name = False
+        if container and str(value or "").strip():
+            filled_name = self._try_fill_signature_text(container, value)
+
+        target = self._find_signature_target(question, alias)
+        if not target:
+            self._open_signature_control(question, alias, container)
+            time.sleep(0.8)
+            target = self._find_signature_target(question, alias)
+
+        if target and self._draw_signature_on_target(target):
+            self._confirm_signature_dialog()
+            if filled_name:
+                self._log(f"    Signature name filled: {value}")
+            self._log("    Signature drawn")
+            return True
+
+        if filled_name:
+            self._log(f"    Signature name filled: {value}")
+            self._log("    WARN: Signature pad not found")
+            return True
+
+        self._log("    WARN: Signature field not found")
+        return False
+
+    def _try_fill_signature_text(self, container: Locator, value: str) -> bool:
+        selectors = [
+            'input[aria-label*="name" i]',
+            'input[placeholder*="name" i]',
+            'input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="file"])',
+            'textarea',
+        ]
+        for sel in selectors:
+            fields = container.locator(sel)
+            for i in range(min(fields.count(), 3)):
+                field = fields.nth(i)
+                try:
+                    if not field.is_visible():
+                        continue
+                    role = (field.get_attribute("role") or "").lower()
+                    input_type = (field.get_attribute("type") or "").lower()
+                    if role == "combobox" or input_type in ("search", "button", "submit"):
+                        continue
+                    field.scroll_into_view_if_needed()
+                    field.click()
+                    time.sleep(0.2)
+                    field.fill("")
+                    field.type(value, delay=30)
+                    self.page.keyboard.press("Tab")
+                    time.sleep(0.2)
+                    return self._verify_input_value(field, value)
+                except:
+                    continue
+        return False
+
+    def _find_signature_target(self, question: str, alias: str = ""):
+        try:
+            handle = self.page.evaluate_handle(
+                """
+                ({question, alias}) => {
+                    const normalize = (s) => (s || "").replace(/\\s+/g, " ").trim().toLowerCase();
+                    const compact = (s) => normalize(s).replace(/[^a-z0-9]+/g, "");
+                    const wanted = compact(question);
+                    const wantedAlias = compact(alias);
+                    const partial = normalize(question).split(" ").filter(Boolean).slice(0, 7).join(" ");
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.display !== "none" &&
+                            style.visibility !== "hidden" &&
+                            rect.width >= 40 &&
+                            rect.height >= 30 &&
+                            rect.bottom >= 0 &&
+                            rect.top <= window.innerHeight &&
+                            rect.right >= 0 &&
+                            rect.left <= window.innerWidth;
+                    };
+                    const textOf = (el) => normalize([
+                        el.innerText,
+                        el.textContent,
+                        el.getAttribute("aria-label"),
+                        el.getAttribute("title"),
+                        el.getAttribute("data-testid"),
+                    ].filter(Boolean).join(" "));
+                    const matchesQuestion = (el) => {
+                        const text = textOf(el);
+                        const cmp = compact(text);
+                        return (wanted && cmp.includes(wanted)) ||
+                            (wantedAlias && cmp.includes(wantedAlias)) ||
+                            (partial && text.includes(partial));
+                    };
+                    const targetSelector = [
+                        "canvas",
+                        "[data-testid*='signature' i]",
+                        "[class*='signature' i]",
+                        "[aria-label*='signature' i]",
+                        "[title*='signature' i]"
+                    ].join(",");
+                    const signatureTargetsIn = (root) => [root, ...Array.from(root.querySelectorAll(targetSelector))]
+                        .filter(visible)
+                        .map((el) => {
+                            const rect = el.getBoundingClientRect();
+                            const tag = el.tagName.toLowerCase();
+                            const text = textOf(el);
+                            const looksSignature = tag === "canvas" ||
+                                /signature|sign here|tap to sign|draw/i.test(text) ||
+                                /signature/i.test(`${el.className || ""} ${el.getAttribute("data-testid") || ""}`);
+                            return { el, rect, tag, looksSignature };
+                        })
+                        .filter((c) => c.looksSignature && c.rect.width >= 120 && c.rect.height >= 55)
+                        .sort((a, b) => {
+                            if (a.tag === "canvas" && b.tag !== "canvas") return -1;
+                            if (a.tag !== "canvas" && b.tag === "canvas") return 1;
+                            return (a.rect.width * a.rect.height) - (b.rect.width * b.rect.height);
+                        })
+                        .map((c) => c.el);
+
+                    const dialogs = Array.from(document.querySelectorAll("[role='dialog'], [class*='modal']"))
+                        .filter(visible);
+                    for (const dialog of dialogs) {
+                        const targets = signatureTargetsIn(dialog);
+                        if (targets.length) return targets[0];
+                    }
+
+                    const matches = Array.from(document.querySelectorAll("body *"))
+                        .filter((el) => visible(el) && matchesQuestion(el))
+                        .map((el) => {
+                            const rect = el.getBoundingClientRect();
+                            return { el, len: textOf(el).length, area: rect.width * rect.height };
+                        })
+                        .sort((a, b) => (a.len - b.len) || (a.area - b.area));
+
+                    for (const match of matches) {
+                        let node = match.el;
+                        for (let depth = 0; node && node !== document.body && depth < 9; depth += 1, node = node.parentElement) {
+                            if (!visible(node)) continue;
+                            const rect = node.getBoundingClientRect();
+                            if (rect.height > 900 || rect.width > 1300) break;
+                            const targets = signatureTargetsIn(node);
+                            if (targets.length) return targets[0];
+                        }
+                    }
+
+                    const fallback = signatureTargetsIn(document.body)
+                        .filter((el) => {
+                            const rect = el.getBoundingClientRect();
+                            return rect.top >= 0 && rect.top <= window.innerHeight;
+                        });
+                    return fallback.length ? fallback[0] : null;
+                }
+                """,
+                {"question": question, "alias": alias},
+            )
+            return handle.as_element()
+        except:
+            return None
+
+    def _open_signature_control(self, question: str, alias: str = "", container: Optional[Locator] = None) -> bool:
+        try:
+            root = container.evaluate_handle("(el) => el") if container else None
+            handle = self.page.evaluate_handle(
+                """
+                ({question, alias, root}) => {
+                    const normalize = (s) => (s || "").replace(/\\s+/g, " ").trim().toLowerCase();
+                    const compact = (s) => normalize(s).replace(/[^a-z0-9]+/g, "");
+                    const wanted = compact(question);
+                    const wantedAlias = compact(alias);
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.display !== "none" &&
+                            style.visibility !== "hidden" &&
+                            rect.width > 0 &&
+                            rect.height > 0 &&
+                            rect.bottom >= 0 &&
+                            rect.top <= window.innerHeight;
+                    };
+                    const textOf = (el) => normalize([
+                        el.innerText,
+                        el.textContent,
+                        el.getAttribute("aria-label"),
+                        el.getAttribute("title"),
+                        el.getAttribute("data-testid"),
+                    ].filter(Boolean).join(" "));
+                    const roots = [];
+                    if (root) roots.push(root);
+                    roots.push(document.body);
+                    for (const scope of roots) {
+                        const candidates = Array.from(scope.querySelectorAll(
+                            "button,[role='button'],[tabindex],[data-testid],[aria-label],canvas,[class*='signature' i]"
+                        ))
+                            .filter(visible)
+                            .map((el) => {
+                                const rect = el.getBoundingClientRect();
+                                const text = textOf(el);
+                                const cmp = compact(text);
+                                const isSignature = /signature|sign here|tap to sign|add signature|draw/i.test(text) ||
+                                    /signature/i.test(`${el.className || ""} ${el.getAttribute("data-testid") || ""}`);
+                                const nearQuestion = (wanted && compact(scope.innerText || "").includes(wanted)) ||
+                                    (wantedAlias && compact(scope.innerText || "").includes(wantedAlias));
+                                return { el, rect, text, cmp, isSignature, nearQuestion };
+                            })
+                            .filter((c) => c.isSignature || c.nearQuestion)
+                            .filter((c) => !/complete inspection|submit|next page|previous page|add note|attach media/i.test(c.text))
+                            .filter((c) => c.rect.width <= 900 && c.rect.height <= 260)
+                            .sort((a, b) => {
+                                if (a.isSignature && !b.isSignature) return -1;
+                                if (!a.isSignature && b.isSignature) return 1;
+                                return (a.rect.width * a.rect.height) - (b.rect.width * b.rect.height);
+                            });
+                        if (candidates.length) return candidates[0].el;
+                    }
+                    return null;
+                }
+                """,
+                {"question": question, "alias": alias, "root": root},
+            )
+            element = handle.as_element()
+            if element and self._click_element(element):
+                self._log("    Opened signature pad")
+                return True
+        except:
+            pass
+        return False
+
+    def _draw_signature_on_target(self, target) -> bool:
+        try:
+            target.scroll_into_view_if_needed(timeout=3000)
+        except:
+            pass
+        try:
+            before = target.evaluate(
+                "(el) => el.tagName && el.tagName.toLowerCase() === 'canvas' ? el.toDataURL() : ''"
+            )
+        except:
+            before = ""
+        box = target.bounding_box()
+        if not box or box["width"] < 80 or box["height"] < 45:
+            return False
+
+        left = box["x"] + max(18, box["width"] * 0.12)
+        right = box["x"] + min(box["width"] - 18, box["width"] * 0.88)
+        mid_y = box["y"] + min(max(box["height"] * 0.58, 28), box["height"] - 18)
+        points = []
+        for i in range(10):
+            t = i / 9
+            x = left + (right - left) * t
+            y = mid_y + ([0, -5, 4, -3, 5, -4, 3, -2, 2, 0][i])
+            points.append((x, y))
+
+        self.page.mouse.move(points[0][0], points[0][1])
+        self.page.mouse.down()
+        for x, y in points[1:]:
+            self.page.mouse.move(x, y)
+            time.sleep(0.03)
+        self.page.mouse.up()
+        time.sleep(0.5)
+
+        try:
+            after = target.evaluate(
+                "(el) => el.tagName && el.tagName.toLowerCase() === 'canvas' ? el.toDataURL() : ''"
+            )
+            if before and after:
+                return before != after
+        except:
+            pass
+        return True
+
+    def _confirm_signature_dialog(self) -> bool:
+        return self._click_dialog_button([
+            'button:has-text("Done")',
+            'button:has-text("Save")',
+            'button:has-text("Apply")',
+            'button:has-text("Confirm")',
+            'button:has-text("OK")',
+        ])
 
     def _try_click_answer(self, container: Locator, answer: str) -> bool:
         """Try to click a button/radio answer in the container."""
@@ -1198,36 +1562,46 @@ class AutomationEngine:
 
         # Custom dropdown: look for input with search/select behavior.
         # SafetyCulture uses inputs that open dropdown on click
-        dropdown_inputs = container.locator('input[role="combobox"], input[aria-autocomplete], input[placeholder*="Select"], input[placeholder*="Search"]')
-        if dropdown_inputs.count() > 0:
-            inp = dropdown_inputs.first
+        dropdown_inputs = container.locator(
+            'input[role="combobox"], input[aria-autocomplete], '
+            'input[placeholder*="Select"], input[placeholder*="Search"], input[type="search"]'
+        )
+        for i in range(min(dropdown_inputs.count(), 4)):
+            inp = dropdown_inputs.nth(i)
             try:
+                if not inp.is_visible():
+                    continue
+                inp.scroll_into_view_if_needed()
                 inp.click()
                 time.sleep(0.5)
-                inp.fill("")
-                inp.type(value, delay=30)
-                time.sleep(1.5)
-                # Click the matching option
-                option = self.page.locator(f'[role="option"]:has-text("{value}"), li:has-text("{value}"), [class*="option"]:has-text("{value}")').first
-                if option.count() > 0:
-                    option.click()
-                    time.sleep(0.3)
-                    suffix = " (verified)" if self._verify_container_has_answer(container, value) else ""
-                    self._log(f"    Dropdown selected: {value}{suffix}")
-                    return True
-                # Try shorter match
-                short_val = value[:20]
-                option2 = self.page.locator(f'[role="option"]:has-text("{short_val}")').first
-                if option2.count() > 0:
-                    option2.click()
-                    time.sleep(0.3)
-                    suffix = " (verified)" if self._verify_container_has_answer(container, value) else ""
-                    self._log(f"    Dropdown selected (partial): {value}{suffix}")
-                    return True
-                self._log(f"    WARN: Dropdown option not found: {value}")
-                return False
+                for term in self._dropdown_search_terms(value):
+                    try:
+                        inp.fill("")
+                        inp.type(term, delay=30)
+                    except:
+                        try:
+                            self.page.keyboard.press("Control+A")
+                            self.page.keyboard.type(term, delay=30)
+                        except:
+                            pass
+                    time.sleep(0.8)
+                    if self._select_open_dropdown_option(value, timeout=2.5):
+                        time.sleep(0.3)
+                        suffix = " (verified)" if self._verify_container_has_answer(container, value) else ""
+                        self._log(f"    Dropdown selected: {value}{suffix}")
+                        return True
+                    try:
+                        self.page.keyboard.press("Enter")
+                        time.sleep(0.4)
+                        if self._verify_container_has_answer(container, value):
+                            self._log(f"    Dropdown selected: {value} (verified)")
+                            return True
+                    except:
+                        pass
             except:
-                pass
+                continue
+        if dropdown_inputs.count() > 0:
+            self._log(f"    WARN: Dropdown option not found: {value}")
 
         # Custom dropdown (click trigger to open)
         dropdown_triggers = [
@@ -1237,37 +1611,173 @@ class AutomationEngine:
             'button[aria-haspopup]',
         ]
         for trigger_sel in dropdown_triggers:
-            trigger = container.locator(trigger_sel).first
-            if trigger.count() > 0 and trigger.is_visible():
+            triggers = container.locator(trigger_sel)
+            for i in range(min(triggers.count(), 4)):
+                trigger = triggers.nth(i)
                 try:
+                    if not trigger.is_visible():
+                        continue
+                    trigger.scroll_into_view_if_needed()
                     trigger.click()
                     time.sleep(0.5)
-                    option = self.page.locator(
-                        f'[role="option"]:has-text("{value}"), '
-                        f'li:has-text("{value}"), '
-                        f'[class*="option"]:has-text("{value}")'
-                    ).first
-                    if option.count() > 0:
-                        option.click()
+                    if self._select_open_dropdown_option(value, timeout=2.0):
                         time.sleep(0.3)
                         suffix = " (verified)" if self._verify_container_has_answer(container, value) else ""
                         self._log(f"    Dropdown trigger selected: {value}{suffix}")
                         return True
-                    # Type to search
-                    self.page.keyboard.type(value, delay=30)
-                    time.sleep(1)
-                    option2 = self.page.locator(f'[role="option"]:has-text("{value[:15]}")').first
-                    if option2.count() > 0:
-                        option2.click()
-                        time.sleep(0.3)
-                        suffix = " (verified)" if self._verify_container_has_answer(container, value) else ""
-                        self._log(f"    Dropdown trigger selected: {value}{suffix}")
-                        return True
-                    self._log(f"    WARN: Dropdown option not found after typing: {value}")
-                    return False
+                    for term in self._dropdown_search_terms(value):
+                        self.page.keyboard.press("Control+A")
+                        self.page.keyboard.type(term, delay=30)
+                        time.sleep(0.8)
+                        if self._select_open_dropdown_option(value, timeout=2.5):
+                            time.sleep(0.3)
+                            suffix = " (verified)" if self._verify_container_has_answer(container, value) else ""
+                            self._log(f"    Dropdown trigger selected: {value}{suffix}")
+                            return True
+                        self.page.keyboard.press("Enter")
+                        time.sleep(0.4)
+                        if self._verify_container_has_answer(container, value):
+                            self._log(f"    Dropdown trigger selected: {value} (verified)")
+                            return True
                 except:
                     continue
+        self._log(f"    WARN: Dropdown option not found after typing: {value}")
         return False
+
+    def _dropdown_search_terms(self, value: str) -> List[str]:
+        raw = str(value or "").strip()
+        terms = [raw]
+        no_paren = re.sub(r"\s*\([^)]*\)\s*", " ", raw).strip()
+        if no_paren and no_paren != raw:
+            terms.append(no_paren)
+        tokens = re.findall(r"[A-Za-z0-9]+", no_paren or raw)
+        for size in (3, 2):
+            if len(tokens) >= size:
+                terms.append(" ".join(tokens[:size]))
+        for digits in re.findall(r"\b\d{3,6}\b", raw):
+            terms.append(digits)
+        deduped = []
+        seen = set()
+        for term in terms:
+            key = term.lower()
+            if term and key not in seen:
+                deduped.append(term)
+                seen.add(key)
+        return deduped
+
+    def _select_open_dropdown_option(self, value: str, timeout: float = 3.0) -> bool:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                handle = self.page.evaluate_handle(
+                    """
+                    (value) => {
+                        const normalize = (s) => (s || "").replace(/\\s+/g, " ").trim();
+                        const lower = (s) => normalize(s).toLowerCase();
+                        const compact = (s) => lower(s).replace(/[^a-z0-9]+/g, "");
+                        const wanted = lower(value);
+                        const wantedCompact = compact(value);
+                        const wantedDigits = (value.match(/\\d{3,6}/g) || []);
+                        const visible = (el) => {
+                            const style = window.getComputedStyle(el);
+                            const rect = el.getBoundingClientRect();
+                            return style.display !== "none" &&
+                                style.visibility !== "hidden" &&
+                                rect.width > 0 &&
+                                rect.height > 0 &&
+                                rect.bottom >= 0 &&
+                                rect.top <= window.innerHeight &&
+                                rect.right >= 0 &&
+                                rect.left <= window.innerWidth;
+                        };
+                        const textOf = (el) => normalize([
+                            el.innerText,
+                            el.textContent,
+                            el.getAttribute("aria-label"),
+                            el.getAttribute("title"),
+                            el.getAttribute("data-testid"),
+                        ].filter(Boolean).join(" "));
+                        const isOptionish = (el) => {
+                            const tag = el.tagName.toLowerCase();
+                            const role = lower(el.getAttribute("role") || "");
+                            const cls = lower(el.getAttribute("class") || "");
+                            const testid = lower(el.getAttribute("data-testid") || "");
+                            return tag === "li" ||
+                                tag === "button" ||
+                                ["option", "menuitem", "listitem", "radio"].includes(role) ||
+                                /option|menuitem|listitem|select.*option|dropdown.*item/.test(`${cls} ${testid}`) ||
+                                el.getAttribute("aria-selected") !== null;
+                        };
+                        const scoreText = (text) => {
+                            const low = lower(text);
+                            const cmp = compact(text);
+                            if (!low || low.length > 180) return null;
+                            if (low === wanted) return 0;
+                            if (cmp === wantedCompact) return 1;
+                            if (low.includes(wanted)) return 10 + Math.abs(low.length - wanted.length);
+                            if (wanted.includes(low) && low.length >= 4) return 20 + Math.abs(low.length - wanted.length);
+                            if (wantedCompact.length >= 4 && cmp.includes(wantedCompact)) return 30 + Math.abs(cmp.length - wantedCompact.length);
+                            if (wantedCompact.length >= 4 && wantedCompact.includes(cmp) && cmp.length >= 4) return 40 + Math.abs(cmp.length - wantedCompact.length);
+                            for (const digits of wantedDigits) {
+                                if (digits && low.includes(digits)) return 60 + Math.abs(low.length - wanted.length);
+                            }
+                            return null;
+                        };
+                        const selector = [
+                            "[role='option']", "[role='menuitem']", "[role='listitem']",
+                            "li", "button", "[role='button']", "[aria-selected]",
+                            "[data-testid*='option' i]", "[data-testid*='menu' i]",
+                            "[class*='option' i]", "[class*='menuitem' i]", "[class*='listitem' i]"
+                        ].join(",");
+                        const candidates = Array.from(document.querySelectorAll(selector))
+                            .filter((el) => visible(el) && !el.disabled && el.getAttribute("aria-disabled") !== "true")
+                            .map((el) => {
+                                const rect = el.getBoundingClientRect();
+                                const text = textOf(el);
+                                const optionish = isOptionish(el);
+                                const score = scoreText(text);
+                                return { el, rect, text, optionish, score };
+                            })
+                            .filter((c) => c.score !== null)
+                            .filter((c) => {
+                                if (c.rect.width > 900 || c.rect.height > 140) return false;
+                                if (!c.optionish && c.rect.height > 80) return false;
+                                const low = lower(c.text);
+                                if (/add note|attach media|create action|complete inspection|previous page|next page/.test(low)) return false;
+                                return true;
+                            })
+                            .sort((a, b) => (a.score - b.score) || (a.rect.top - b.rect.top) || (a.rect.height - b.rect.height));
+                        return candidates.length ? candidates[0].el : null;
+                    }
+                    """,
+                    value,
+                )
+                option = handle.as_element()
+                if option and self._click_element(option):
+                    time.sleep(0.4)
+                    return True
+            except:
+                pass
+            time.sleep(0.25)
+        return False
+
+    def _click_element(self, element, timeout: int = 3000) -> bool:
+        try:
+            element.scroll_into_view_if_needed(timeout=timeout)
+        except:
+            pass
+        try:
+            element.click(timeout=timeout)
+            return True
+        except:
+            try:
+                box = element.bounding_box()
+                if not box:
+                    return False
+                self.page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+                return True
+            except:
+                return False
 
     def _try_fill_textarea(self, container: Locator, value: str) -> bool:
         """Try to fill a textarea in the container."""
@@ -2891,13 +3401,13 @@ class AutomationEngine:
         try:
             self.page.goto(SC_LOGIN_URL)
             time.sleep(PAGE_LOAD_WAIT)
-            if has_saved_credentials():
-                creds = load_credentials()
+            if has_saved_credentials(self.account_name):
+                creds = load_credentials(self.account_name)
                 if creds and self._auto_fill_login(creds[0], creds[1]):
                     self.page.wait_for_url(
                         lambda url: "/login" not in url and "safetyculture" in url, timeout=30000)
                     time.sleep(PAGE_LOAD_WAIT)
-                    save_session_state(self.page)
+                    save_session_state(self.page, self.account_name)
                     self._log("  Re-login OK")
                     return
             self._log("  Re-login failed - manual intervention needed")

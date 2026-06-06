@@ -28,22 +28,37 @@ def _today_key() -> str:
     return date.today().isoformat()
 
 
-def is_already_run_today(template: str, site: str) -> bool:
+def make_run_key(template: str, site: str, account: str = "") -> str:
+    """Build the daily lock key. Empty account keeps the legacy key format."""
+    base = f"{template}|{site}"
+    account = str(account or "").strip()
+    return f"{account}|{base}" if account else base
+
+
+def inspection_run_key(insp) -> str:
+    return make_run_key(
+        getattr(insp, "template_name", ""),
+        getattr(insp, "site_location", ""),
+        getattr(insp, "account_name", ""),
+    )
+
+
+def is_already_run_today(template: str, site: str, account: str = "") -> bool:
     """Check if this inspection was already completed today."""
     data = _load()
     today = _today_key()
     runs = data.get(today, [])
-    key = f"{template}|{site}"
+    key = make_run_key(template, site, account)
     return key in runs
 
 
-def mark_completed(template: str, site: str):
+def mark_completed(template: str, site: str, account: str = ""):
     """Mark inspection as completed today."""
     data = _load()
     today = _today_key()
     if today not in data:
         data[today] = []
-    key = f"{template}|{site}"
+    key = make_run_key(template, site, account)
     if key not in data[today]:
         data[today].append(key)
     # Clean old entries (keep last 7 days)
@@ -73,7 +88,7 @@ def get_remaining(inspections_list: list) -> list:
     completed = get_today_completed()
     remaining = []
     for insp in inspections_list:
-        key = f"{insp.template_name}|{insp.site_location}"
+        key = inspection_run_key(insp)
         if key not in completed:
             remaining.append(insp)
     return remaining

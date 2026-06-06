@@ -34,7 +34,7 @@ GBC ABS-VONS 0724,5/2/2026,Yummi Sushi Opening Checklist,Sanitizer,Does your Che
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi Opening Checklist,Sanitizer,Upload a picture of the Chemicals,,,chemical.jpeg
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi Opening Checklist,Sanitizer,Sanitizer bucket within range?,Yes,,bucket.jpeg
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi - Hot Food Cooling Log,Title Page,Site conducted,GBC ABS-VONS 0724,,
-GBC ABS-VONS 0724,5/2/2026,Yummi Sushi - Hot Food Cooling Log,Title Page,Conducted on,6:00 AM,,
+GBC ABS-VONS 0724,5/2/2026,Yummi Sushi - Hot Food Cooling Log,Title Page,Conducted on,7:00 AM,,
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi - Hot Food Cooling Log,Title Page,Prepared by,GBC ABS-VONS 0724 19640 Beach Blvd,,
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi - Hot Food Cooling Log,Navigation,NEXTPAGE,NEXTPAGE,,
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi - Hot Food Cooling Log,Untitled Page,Did you Produce Hot Food Today?,No,,
@@ -59,7 +59,7 @@ GBC ABS-VONS 0724,5/2/2026,Yummi Sushi - Sushi Rice pH Testing,pH Testing,How ma
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi - Sushi Rice pH Testing,pH Testing,What is the pH of the Rice Slurry?,3.92,,
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi - Sushi Rice pH Testing,pH Testing,"Was the rice completely used, or was there left over rice that was discarded.",Discarded,,
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi Closing Checklist,Title Page,Site conducted,GBC ABS-VONS 0724,,
-GBC ABS-VONS 0724,5/2/2026,Yummi Sushi Closing Checklist,Title Page,Conducted on,5:30 PM,,
+GBC ABS-VONS 0724,5/2/2026,Yummi Sushi Closing Checklist,Title Page,Conducted on,5:00 PM,,
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi Closing Checklist,Title Page,Prepared by,GBC ABS-VONS 0724 19640 Beach Blvd,,
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi Closing Checklist,Navigation,NEXTPAGE,NEXTPAGE,,
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi Closing Checklist,Closing Checklist,Did you have production today?,Yes,,
@@ -75,7 +75,7 @@ GBC ABS-VONS 0724,5/2/2026,Yummi Sushi Closing Checklist,Closing Checklist,Bambo
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi Closing Checklist,Closing Checklist,Prep Sink,Yes,,
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi Closing Checklist,Closing Checklist,Light Fixtures,Yes,,
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi Closing Checklist,Closing Checklist,BOHA Machine,Yes,,
-GBC ABS-VONS 0724,5/2/2026,Yummi Sushi Closing Checklist,Closing Checklist,Sushi Rolling Machine (If Applicable),Yes,,
+GBC ABS-VONS 0724,5/2/2026,Yummi Sushi Closing Checklist,Closing Checklist,Sushi Rolling Machine (If Applicable),SKIP,,
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi Closing Checklist,Closing Checklist,Sweep Floor,Yes,,
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi Closing Checklist,Closing Checklist,Mop Floor,Yes,,
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi Closing Checklist,Closing Checklist,Empty Trash,Yes,,
@@ -131,3 +131,8 @@ GBC ABS-VONS 0724,5/2/2026,Yummi Sushi 10 AM Checklist,Temperatures,Check Temp o
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi 10 AM Checklist,Temperatures,Check Temp of Walk-In Freezer,2,,
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi 10 AM Checklist,Temperatures,Check Temp of Sushi package,34.5,,
 GBC ABS-VONS 0724,5/2/2026,Yummi Sushi 10 AM Checklist,Sanitizer,Sanitizer bucket within range?,Yes,,bucket.jpeg
+GBC ABS-VONS 0724,5/2/2026,Yummi Sushi - 11AM Case Photos,Title Page,Site conducted,GBC ABS-VONS 0724,,
+GBC ABS-VONS 0724,5/2/2026,Yummi Sushi - 11AM Case Photos,Title Page,Conducted on,11:00 AM,,
+GBC ABS-VONS 0724,5/2/2026,Yummi Sushi - 11AM Case Photos,Title Page,Prepared by,GBC ABS-VONS 0724 19640 Beach Blvd,,
+GBC ABS-VONS 0724,5/2/2026,Yummi Sushi - 11AM Case Photos,Navigation,NEXTPAGE,NEXTPAGE,,
+GBC ABS-VONS 0724,5/2/2026,Yummi Sushi - 11AM Case Photos,Case Photos,Display Case Photo,,,11am.jpeg

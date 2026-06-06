@@ -22,9 +22,14 @@ from autostart import (
     save_validation_state,
 )
 from config import DATA_DIR, LOG_DIR
-from data_loader import load_data, validate_detailed
+from data_loader import (
+    filter_inspections_for_run_time,
+    get_inspection_schedule_times,
+    load_data,
+    validate_detailed,
+)
 from history import add_record
-from notifier import send_daily_summary, send_error_alert
+from notifier import send_daily_summary, send_error_alert, send_success_report
 from reporter import generate_report
 from runlock import get_remaining, mark_completed
 from run_state import (
@@ -39,6 +44,7 @@ from scheduler import (
     is_schedule_due_now,
     load_schedule,
     mark_schedule_run,
+    save_schedule,
 )
 from session_manager import has_saved_credentials, has_saved_session
 from singleton import acquire_lock, release_lock
@@ -167,7 +173,57 @@ def _send_blocking_error(message: str, screenshot: Optional[str] = None):
     send_error_alert(message, screenshot)
 
 
-def execute_auto_run() -> bool:
+def _inspection_account(insp) -> str:
+    return str(getattr(insp, "account_name", "") or "").strip()
+
+
+def _account_label(account_name: str) -> str:
+    return account_name or "default"
+
+
+def _missing_login_accounts(inspections: list) -> list:
+    missing = []
+    seen = set()
+    for insp in inspections:
+        account = _inspection_account(insp)
+        if account in seen:
+            continue
+        seen.add(account)
+        if not has_saved_session(account) and not has_saved_credentials(account):
+            missing.append(_account_label(account))
+    return missing
+
+
+def _filter_login_ready(inspections: list) -> tuple:
+    ready = []
+    missing_accounts = []
+    seen_missing = set()
+    for insp in inspections:
+        account = _inspection_account(insp)
+        if has_saved_session(account) or has_saved_credentials(account):
+            ready.append(insp)
+            continue
+        label = _account_label(account)
+        if label not in seen_missing:
+            missing_accounts.append(label)
+            seen_missing.add(label)
+    return ready, missing_accounts
+
+
+def _group_by_account(inspections: list) -> list:
+    """Run each account as one contiguous block to avoid session churn."""
+    order = []
+    groups = {}
+    for insp in inspections:
+        account = _inspection_account(insp)
+        if account not in groups:
+            groups[account] = []
+            order.append(account)
+        groups[account].append(insp)
+    return [insp for account in order for insp in groups[account]]
+
+
+def execute_auto_run(scheduled_time: str = "") -> bool:
     """Run all due inspections in Auto Mode. Returns True when all run OK."""
     data_file = get_last_data_file()
     image_folder = get_last_image_folder()
@@ -175,13 +231,6 @@ def execute_auto_run() -> bool:
     ok, msg, _ = _validate_inputs(data_file, image_folder)
     if not ok:
         _send_blocking_error(msg)
-        return False
-
-    if not has_saved_session() and not has_saved_credentials():
-        _send_blocking_error(
-            "Runner nền cần SafetyCulture session hoặc credentials đã lưu. "
-            "Mở CheckPilot một lần, đăng nhập SafetyCulture và lưu credentials."
-        )
         return False
 
     try:
@@ -197,18 +246,50 @@ def execute_auto_run() -> bool:
             "\n".join(f"- {t}" for t in invalid_templates)
         )
 
-    run_list = get_remaining(inspections)
-    skipped = len(inspections) - len(run_list)
+    schedule = load_schedule()
+    source_list = inspections
+    if scheduled_time and schedule.get("template_times", True):
+        source_list = filter_inspections_for_run_time(inspections, scheduled_time)
+        if not source_list:
+            _log(f"Không có template nào đặt giờ {scheduled_time}; bỏ qua slot này.")
+            return True
+        _log(
+            f"Lịch {scheduled_time}: chạy {len(source_list)} template - " +
+            ", ".join(i.template_name for i in source_list)
+        )
+
+    source_total = len(source_list)
+    source_list, missing_accounts = _filter_login_ready(source_list)
+    if missing_accounts:
+        _send_blocking_error(
+            "Runner nền cần SafetyCulture session hoặc credentials đã lưu cho account: "
+            + ", ".join(missing_accounts)
+            + ". Mở CheckPilot, vào Settings và lưu SafetyCulture profile trước khi chạy lịch."
+        )
+        if not source_list:
+            send_daily_summary(total=0, success=0, failed=0, skipped=source_total)
+            return False
+
+    run_list = _group_by_account(get_remaining(source_list))
+    skipped = (source_total - len(source_list)) + (len(source_list) - len(run_list))
     if not run_list:
         _log("Không còn inspection cần chạy hôm nay.")
         send_daily_summary(total=0, success=0, failed=0, skipped=skipped)
         return True
+    account_blocks = []
+    for insp in run_list:
+        label = _account_label(_inspection_account(insp))
+        if label not in account_blocks:
+            account_blocks.append(label)
+    if len(account_blocks) > 1:
+        _log("Account blocks for this slot: " + " -> ".join(account_blocks))
 
     if not acquire_lock():
         _send_blocking_error("CheckPilot GUI/automation khác đang chạy. Runner bỏ qua để tránh submit trùng.")
         return False
 
-    engine = AutomationEngine(log_callback=_log, force_headless=True, allow_manual_login=False)
+    engine = None
+    current_account = None
     total = len(run_list)
     success = 0
     failed = 0
@@ -223,19 +304,37 @@ def execute_auto_run() -> bool:
     )
 
     try:
-        engine.start_browser()
-        engine.wait_for_login()
-
-        _log("Running health check...")
-        hc_ok, hc_msg = engine.health_check()
-        if not hc_ok:
-            screenshot = engine._screenshot_error("runner_health_check_failed")
-            failed = total
-            _send_blocking_error(f"Health check failed: {hc_msg}", screenshot)
-            return False
-
         for idx, insp in enumerate(run_list, 1):
-            _log(f"[{idx}/{total}] AUTO: {insp.template_name} | {insp.site_location}")
+            account = _inspection_account(insp)
+            if engine is None or account != current_account:
+                if engine is not None:
+                    try:
+                        engine.close_browser()
+                    except Exception:
+                        pass
+                current_account = account
+                _log(f"Switching SafetyCulture account: {_account_label(account)}")
+                engine = AutomationEngine(
+                    log_callback=_log,
+                    force_headless=True,
+                    allow_manual_login=False,
+                    account_name=account,
+                )
+                engine.start_browser()
+                engine.wait_for_login()
+
+                _log("Running health check...")
+                hc_ok, hc_msg = engine.health_check()
+                if not hc_ok:
+                    screenshot = engine._screenshot_error("runner_health_check_failed")
+                    failed = total - success
+                    _send_blocking_error(f"Health check failed: {hc_msg}", screenshot)
+                    return False
+
+            _log(
+                f"[{idx}/{total}] AUTO: {insp.template_name} | {insp.site_location}"
+                + (f" | account={account}" if account else "")
+            )
             update_run_state(
                 status="running",
                 current_index=idx,
@@ -250,9 +349,21 @@ def execute_auto_run() -> bool:
             errors = []
             if ok:
                 consecutive_failures = 0
-                if not engine.verify_inspection_saved(insp.template_name):
+                verified = engine.verify_inspection_saved(insp.template_name, insp)
+                if not verified:
                     _log("Submitted but not verified in list yet")
-                mark_completed(insp.template_name, insp.site_location)
+                success_ss = engine.capture_success_screenshot(insp.template_name)
+                send_success_report(
+                    insp.template_name,
+                    insp.site_location,
+                    len(insp.items),
+                    len(engine.item_errors),
+                    screenshot_path=success_ss,
+                    verified=verified,
+                    scheduled_time=scheduled_time,
+                    url=engine.page.url if engine.page else "",
+                )
+                mark_completed(insp.template_name, insp.site_location, _inspection_account(insp))
                 success += 1
             else:
                 errors = engine.item_errors or [f"Failed: {insp.template_name}"]
@@ -321,7 +432,8 @@ def execute_auto_run() -> bool:
         failed = max(failed, total - success)
         screenshot = None
         try:
-            screenshot = engine._screenshot_error("runner_fatal")
+            if engine:
+                screenshot = engine._screenshot_error("runner_fatal")
         except Exception:
             pass
         _send_blocking_error(f"Runner fatal: {e}", screenshot)
@@ -333,7 +445,8 @@ def execute_auto_run() -> bool:
         except Exception:
             pass
         try:
-            engine.close_browser()
+            if engine:
+                engine.close_browser()
         except Exception:
             pass
         clear_run_state()
@@ -348,6 +461,20 @@ def run_if_due(force: bool = False, quiet: bool = False) -> Optional[bool]:
         return execute_auto_run()
 
     schedule = load_schedule()
+    if schedule.get("template_times", True):
+        data_file = get_last_data_file()
+        image_folder = get_last_image_folder()
+        if data_file:
+            try:
+                inspections = _prepare_inspections(data_file, image_folder)
+                times = get_inspection_schedule_times(inspections)
+                if times:
+                    schedule["times"] = times
+                    schedule["template_times"] = True
+                    save_schedule(schedule)
+            except Exception as e:
+                if not quiet:
+                    _log(f"Không đọc được giờ template từ CSV: {e}")
     if not force:
         due, scheduled_time, reason = is_schedule_due_now(schedule)
         if not due:
@@ -365,11 +492,13 @@ def run_if_due(force: bool = False, quiet: bool = False) -> Optional[bool]:
         mark_schedule_run(schedule, scheduled_time)
     else:
         _log("Force run: bỏ qua kiểm tra giờ lịch.")
-    return execute_auto_run()
+    return execute_auto_run(scheduled_time if not force else "")
 
 
 def status() -> int:
     schedule = load_schedule()
+    data_file = get_last_data_file()
+    image_folder = get_last_image_folder()
     target = get_next_run_datetime(schedule)
     _log(f"Data file: {get_last_data_file() or '(chưa cấu hình)'}")
     _log(f"Image folder: {get_last_image_folder() or '(chưa cấu hình)'}")
@@ -377,6 +506,19 @@ def status() -> int:
     _log(f"Next run: {target.strftime('%d/%m/%Y %H:%M') if target else 'N/A'}")
     _log(f"Saved SC session: {has_saved_session()}")
     _log(f"Saved SC credentials: {has_saved_credentials()}")
+    if data_file and os.path.exists(data_file):
+        try:
+            inspections = _prepare_inspections(data_file, image_folder)
+            accounts = []
+            for insp in inspections:
+                label = _account_label(_inspection_account(insp))
+                if label not in accounts:
+                    accounts.append(label)
+            _, missing = _filter_login_ready(inspections)
+            _log(f"Accounts in CSV: {', '.join(accounts) if accounts else 'default'}")
+            _log(f"Missing account login: {', '.join(missing) if missing else 'None'}")
+        except Exception as e:
+            _log(f"Account status unavailable: {e}")
     return 0
 
 

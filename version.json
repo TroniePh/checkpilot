@@ -1,6 +1,6 @@
 {
-  "version": "2.5.5",
-  "release_date": "2026-05-27",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.5.5/CheckPilot_Setup_v2.5.5.exe",
-  "changelog": "v2.5.5: Adds missed-schedule catch-up for boot/restart cases. If Windows or the GUI starts shortly after a scheduled run time, CheckPilot runs that missed slot instead of waiting until the next day. Template locks remain warnings only."
+  "version": "2.6.0",
+  "release_date": "2026-06-06",
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.6.0/CheckPilot_Setup_v2.6.0.exe",
+  "changelog": "v2.6.0: Fixes ACE VONS 02090 store dropdown selection, ACE page navigation, and final signature handling. Includes the ACE customer schedule/test CSV files for customer update."
 }

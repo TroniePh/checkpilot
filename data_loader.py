@@ -1,5 +1,6 @@
 """Load and validate inspection data from Excel/CSV files."""
 import os
+import re
 import pandas as pd
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -23,6 +24,10 @@ class InspectionData:
     site_location: str
     inspection_date: str
     template_name: str
+    run_time: str = ""
+    account_name: str = ""
+    template_folder_url: str = ""
+    template_folder_name: str = ""
     items: List[InspectionItem] = field(default_factory=list)
 
 
@@ -35,7 +40,90 @@ REQUIRED_COLUMNS = [
     "answer",
 ]
 
-OPTIONAL_COLUMNS = ["notes", "image_path"]
+OPTIONAL_COLUMNS = [
+    "notes", "image_path", "image_required", "question_alias",
+    "question_key", "run_time", "schedule_time", "scheduled_time", "run_at",
+    "account", "account_name", "account_profile", "safetyculture_account", "sc_account",
+    "template_folder_url", "template_folder_name",
+]
+ACCOUNT_COLUMNS = ("account", "account_name", "account_profile", "safetyculture_account", "sc_account")
+NO_ANSWER_VALUES = {"skip", "noanswer", "no answer", "ignore", "none"}
+
+
+def is_no_answer(value: str) -> bool:
+    return str(value or "").strip().lower() in NO_ANSWER_VALUES
+
+
+def normalize_run_time(value: str) -> str:
+    """Normalize values like 7am, 7:00 AM, 17:00 to HH:MM."""
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    cleaned = raw.lower().replace(".", "").replace(" ", "")
+    match = re.match(r"^(\d{1,2})(?::?(\d{2}))?(am|pm)?$", cleaned)
+    if not match:
+        return ""
+    hour = int(match.group(1))
+    minute = int(match.group(2) or "0")
+    suffix = match.group(3)
+    if minute < 0 or minute > 59:
+        return ""
+    if suffix:
+        if hour < 1 or hour > 12:
+            return ""
+        if suffix == "am":
+            hour = 0 if hour == 12 else hour
+        else:
+            hour = 12 if hour == 12 else hour + 12
+    elif hour < 0 or hour > 23:
+        return ""
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _derive_group_run_time(group) -> str:
+    for col in ("run_time", "schedule_time", "run_at", "scheduled_time"):
+        if col in group.columns:
+            for value in group[col].tolist():
+                normalized = normalize_run_time(value)
+                if normalized:
+                    return normalized
+    conducted = group[
+        group["question"].astype(str).str.strip().str.lower().str.contains("conducted on", na=False)
+    ]
+    for value in conducted.get("answer", []).tolist():
+        normalized = normalize_run_time(value)
+        if normalized:
+            return normalized
+    return ""
+
+
+def _first_group_value(group, columns) -> str:
+    for col in columns:
+        if col in group.columns:
+            for value in group[col].tolist():
+                text = str(value or "").strip()
+                if text:
+                    return text
+    return ""
+
+
+def _row_first_value(row, columns) -> str:
+    for col in columns:
+        value = str(row.get(col, "") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def get_inspection_schedule_times(inspections: List["InspectionData"]) -> List[str]:
+    return sorted({insp.run_time for insp in inspections if getattr(insp, "run_time", "")})
+
+
+def filter_inspections_for_run_time(inspections: List["InspectionData"], run_time: str) -> List["InspectionData"]:
+    target = normalize_run_time(run_time)
+    if not target:
+        return []
+    return [insp for insp in inspections if getattr(insp, "run_time", "") == target]
 
 
 def load_data(file_path: str, image_folder: str = "") -> List[InspectionData]:
@@ -66,15 +154,35 @@ def load_data(file_path: str, image_folder: str = "") -> List[InspectionData]:
     # Fill NaN
     df = df.fillna("")
 
+    for col in OPTIONAL_COLUMNS:
+        if col not in df.columns:
+            df[col] = ""
+
+    df["_cp_account_name"] = df.apply(lambda row: _row_first_value(row, ACCOUNT_COLUMNS), axis=1)
+    df["_cp_template_folder_url"] = df["template_folder_url"].astype(str).str.strip()
+    df["_cp_template_folder_name"] = df["template_folder_name"].astype(str).str.strip()
+
     # Group by inspection
-    grouped = df.groupby(["site_location", "inspection_date", "template_name"], sort=False)
+    group_cols = [
+        "_cp_account_name",
+        "_cp_template_folder_url",
+        "_cp_template_folder_name",
+        "site_location",
+        "inspection_date",
+        "template_name",
+    ]
+    grouped = df.groupby(group_cols, sort=False, dropna=False)
 
     inspections: List[InspectionData] = []
-    for (site, date, template), group in grouped:
+    for (account_name, folder_url, folder_name, site, date, template), group in grouped:
         inspection = InspectionData(
             site_location=str(site).strip(),
             inspection_date=str(date).strip(),
             template_name=str(template).strip(),
+            run_time=_derive_group_run_time(group),
+            account_name=str(account_name).strip(),
+            template_folder_url=str(folder_url).strip() or _first_group_value(group, ("template_folder_url",)),
+            template_folder_name=str(folder_name).strip() or _first_group_value(group, ("template_folder_name",)),
         )
 
         for _, row in group.iterrows():
@@ -124,6 +232,7 @@ def validate_data(inspections: List[InspectionData]) -> List[str]:
         "yes", "no", "n/a", "safe", "at risk", "compliant", "non-compliant",
         "not applicable", "unsafe", "pass", "fail", "good", "satisfactory",
         "unsatisfactory", "acceptable", "not acceptable",
+        "skip", "noanswer", "no answer", "ignore", "none",
     }
 
     for i, insp in enumerate(inspections):
@@ -241,6 +350,7 @@ def validate_detailed(file_path: str, image_folder: str = "") -> dict:
         "not applicable", "unsafe", "pass", "fail", "good", "satisfactory",
         "unsatisfactory", "acceptable", "not acceptable", "nextpage", "used",
         "discarded", "white rice", "brown rice",
+        "skip", "noanswer", "no answer", "ignore", "none",
     }
 
     def _is_valid_answer(val):

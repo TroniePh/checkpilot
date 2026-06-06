@@ -35,6 +35,10 @@ Các cột tùy chọn:
 | `image_path` | Tên ảnh, nhiều ảnh ngăn cách bằng dấu `;` |
 | `image_required` | `yes/true/1` nếu ảnh bắt buộc |
 | `question_alias` | Text phụ để tìm câu hỏi khi SafetyCulture hiển thị khác |
+| `run_time` / `schedule_time` / `run_at` | Giờ chạy riêng cho template, ví dụ `17:00` hoặc `5pm` |
+| `account` / `account_profile` | Tên SafetyCulture profile đã lưu trong Settings |
+| `template_folder_url` | Folder URL riêng cho template/account này nếu khác mặc định |
+| `template_folder_name` | Tên folder riêng nếu không dùng folder URL |
 
 ## Quy trình chạy
 
@@ -61,6 +65,7 @@ App lưu lại file dữ liệu và thư mục ảnh đã chọn để Scheduler
 - Health check trước khi chạy automation.
 - Report HTML sau mỗi inspection.
 - Telegram alert nếu được cấu hình.
+- Sau mỗi template submit và verify OK, app chụp screenshot bằng chứng đã save/verified và gửi Telegram cho tất cả tài khoản đã cấu hình.
 - Nếu SafetyCulture hiện popup "An error has occurred", app bỏ draft lỗi và chạy lại đúng template đó tối đa 3 lần.
 - Telegram lỗi gửi thêm template, site, câu hỏi hiện tại, URL và các lỗi item gần nhất.
 - Auto Mode tự dừng sau 3 template lỗi liên tiếp để tránh submit/chạy sai hàng loạt khi website hoặc dữ liệu có vấn đề.
@@ -69,11 +74,21 @@ App lưu lại file dữ liệu và thư mục ảnh đã chọn để Scheduler
 
 Scheduler hỗ trợ nhiều giờ chạy trong ngày. Khi tới giờ, app tự load file đã lưu, validate, đặt ngày hôm nay, tắt Test mode và bật Auto submit.
 
+Mặc định Scheduler dùng giờ theo từng template trong CSV. App đọc cột `run_time`, `schedule_time`, `run_at`, hoặc tự lấy từ câu `Conducted on` nếu không có các cột đó. Khi tới một giờ, app chỉ chạy các template thuộc giờ đó, không chạy toàn bộ CSV mỗi slot.
+
+Nếu template nằm trong SafetyCulture account khác, vào Settings -> SafetyCulture profiles, lưu profile với tên ngắn như `second_account`, rồi thêm cột `account` trong CSV và điền đúng tên profile đó cho toàn bộ dòng của template. Ví dụ template cần chạy lúc 5pm thì đặt `run_time=17:00` và `account=second_account`; khi tới slot `17:00`, app tự đóng session hiện tại, đăng nhập profile đó và Complete/Submit template tương ứng.
+
+Nếu cùng một slot có nhiều account, CheckPilot gom theo từng account block để tránh đổi session qua lại: chạy xong các template account A, đóng browser, rồi mới mở account B. Nếu một account trong slot chưa có session/credentials, account đó bị bỏ qua và gửi alert; các account còn đủ login vẫn tiếp tục chạy.
+
 Nếu app chưa có file dữ liệu hoặc validate không đạt, lịch chạy sẽ dừng và ghi log.
 
 Khi lịch đang bật, bấm Start ở Auto Mode sẽ không chạy ngay nếu chưa tới đúng phút đã set. Ví dụ lịch đặt `05:30`, nếu bấm Start lúc `05:10` thì app chuyển sang trạng thái chờ và tự chạy lúc `05:30`. Nếu bấm đúng trong phút `05:30` thì app chạy Auto Mode ngay và đánh dấu slot đó đã chạy để tránh chạy trùng.
 
 Nếu Windows/app mở lại sau giờ lịch nhưng còn trong khoảng chạy bù mặc định 180 phút, scheduler sẽ chạy bù slot vừa trễ. Ví dụ lịch `17:30`, máy có điện lại lúc `17:32` thì runner sẽ tự chạy Auto Mode cho slot `17:30`.
+
+Nếu có nhiều slot bị lỡ trong khoảng chạy bù, CheckPilot chạy theo thứ tự thời gian tăng dần để tránh chạy slot `5PM` trước slot `4PM`.
+
+Sau khi chạy xong một slot theo lịch, app tự quay về chế độ chờ lịch kế tiếp. Ví dụ chạy xong slot `06:00` thì trạng thái sẽ chuyển sang chờ `07:00`, không cần bấm lại. Khi Windows/app khởi động lại và lịch đang bật, CheckPilot cũng tự vào chế độ chờ lịch hoặc chạy bù slot còn trong khoảng cho phép.
 
 ## Khởi động cùng Windows
 

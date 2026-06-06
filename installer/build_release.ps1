@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $Root
 
-$Version = "2.5.5"
+$Version = "2.6.0"
 $Python = Join-Path $Root "venv\Scripts\python.exe"
 if (-not (Test-Path $Python)) {
     $Python = "python"
@@ -34,7 +34,6 @@ Remove-Item -Recurse -Force "build", "dist\CheckPilot" -ErrorAction SilentlyCont
     --add-data "sample_data.csv;." `
     --add-data "version.json;." `
     --add-data "yummi_sushi_data.csv;." `
-    --add-data "YUMMI SAFETY CULTURE;YUMMI SAFETY CULTURE" `
     --add-data ".browsers;.browsers" `
     --hidden-import "PIL._tkinter_finder" `
     main.py
@@ -45,6 +44,20 @@ Copy-Item "HUONG_DAN_SU_DUNG.md" "dist\CheckPilot\HUONG_DAN_SU_DUNG.md" -Force
 Copy-Item "sample_data.csv" "dist\CheckPilot\sample_data.csv" -Force
 Copy-Item "version.json" "dist\CheckPilot\version.json" -Force
 Copy-Item "yummi_sushi_data.csv" "dist\CheckPilot\yummi_sushi_data.csv" -Force
+$ClientDataDst = "dist\CheckPilot\YUMMI SAFETY CULTURE"
+New-Item -ItemType Directory -Force -Path $ClientDataDst | Out-Null
+$ClientDataFiles = @(
+    "YUMMI SAFETY CULTURE\yummi_sushi_data.csv",
+    "YUMMI SAFETY CULTURE\customer_schedule_data.csv",
+    "YUMMI SAFETY CULTURE\ace_vons_02090_test_template.csv",
+    "YUMMI SAFETY CULTURE\HUONG_DAN_CHAY_ACE_VONS_02090.md",
+    "YUMMI SAFETY CULTURE\*.jpeg",
+    "YUMMI SAFETY CULTURE\*.jpg",
+    "YUMMI SAFETY CULTURE\*.png"
+)
+foreach ($Pattern in $ClientDataFiles) {
+    Copy-Item $Pattern $ClientDataDst -Force -ErrorAction SilentlyContinue
+}
 
 Write-Host "[5/5] Build installer"
 $IsccPath = $null

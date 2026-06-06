@@ -16,7 +16,7 @@ from config import DATA_DIR, INSTALL_DIR
 
 logger = logging.getLogger(__name__)
 
-CURRENT_VERSION = "2.5.5"
+CURRENT_VERSION = "2.6.0"
 # Update URL — host file version.json ở đây (GitHub raw, server riêng, etc.)
 VERSION_CHECK_URL = "https://raw.githubusercontent.com/TroniePh/checkpilot/main/version.json"
 UPDATE_CHECK_FILE = os.path.join(DATA_DIR, "last_update_check.json")

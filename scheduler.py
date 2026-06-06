@@ -30,12 +30,16 @@ def load_schedule() -> dict:
         # Migration: convert old single "time" to "times" list
         if "time" in data and "times" not in data:
             data["times"] = [data.pop("time")]
+        data.setdefault("template_times", True)
+        data.setdefault("missed_grace_minutes", DEFAULT_MISSED_GRACE_MINUTES)
+        data.setdefault("runs_today", [])
         return data
     return {
         "enabled": False,
         "times": ["05:00"],
         "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
         "auto_date_today": True,
+        "template_times": True,
         "missed_grace_minutes": DEFAULT_MISSED_GRACE_MINUTES,
         "runs_today": [],
     }
@@ -124,7 +128,9 @@ def is_schedule_due_now(config: dict, now: Optional[datetime] = None) -> tuple:
             missed.append((target, value))
 
     if missed:
-        _, scheduled_time = max(missed, key=lambda item: item[0])
+        # Catch up in chronological order so a restart after several missed
+        # slots does not run 5PM before 4PM.
+        _, scheduled_time = min(missed, key=lambda item: item[0])
         return True, scheduled_time, "missed"
     return False, "", "not scheduled minute"
 
@@ -221,9 +227,11 @@ class Scheduler:
             self._log(f"Missed schedule {scheduled_time}; running catch-up at {now.strftime('%H:%M')}")
         else:
             self._log(f"Scheduled run triggered at {now.strftime('%H:%M')}")
-        mark_schedule_run(self.config, scheduled_time, now)
         try:
-            self.run_callback()
+            try:
+                self.run_callback(scheduled_time)
+            except TypeError:
+                self.run_callback()
         except Exception as e:
             self._log(f"Scheduled run failed: {str(e)}")
 

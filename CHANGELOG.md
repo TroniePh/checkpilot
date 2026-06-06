@@ -1,5 +1,47 @@
 # Changelog — CheckPilot™
 
+## v2.6.0 (2026-06-06)
+
+- Fixed ACE Daily Food Safety Log store selection so `Select Your Store` chooses the real `VONS 02090 (Main)` dropdown option instead of only typing text into the field.
+- Added automatic handling for final signature questions: CheckPilot fills the name and draws on the SafetyCulture signature pad when required.
+- Corrected the ACE VONS 02090 CSV page navigation by removing the extra `NEXTPAGE` before the temperature sections.
+- Added ACE VONS 02090 customer schedule/test CSV handoff files to the packaged installer.
+
+---
+
+## v2.5.9 (2026-05-28)
+
+- Added Telegram success evidence: after each template submits and verifies in SafetyCulture, CheckPilot captures a success screenshot and sends it to all configured Telegram recipients.
+- Success alerts now include template, site, item count, schedule slot, verification status, current URL, and the proof screenshot.
+- Removed pre-verify success alerts so Telegram success evidence is only sent after the save/verify step.
+
+---
+
+## v2.5.8 (2026-05-27)
+
+- Fixed always-on scheduled operation: after a scheduled template slot completes, the GUI automatically returns to waiting for the next slot instead of showing final completion.
+- On startup/reboot, if schedule is enabled and saved data is valid, CheckPilot automatically enters schedule wait mode without requiring a manual click.
+- Scheduler no longer marks a slot as run until the GUI actually accepts and starts that slot; if automation is still busy, the slot remains eligible for catch-up.
+
+---
+
+## v2.5.7 (2026-05-27)
+
+- Fixed missed-slot catch-up order so restart recovery runs older missed template slots before newer ones.
+- Hardened GUI updates from scheduler/worker threads so tab switching or closing the app does not trigger Tk widget errors.
+- Re-verified Yummi Sushi CSV: 11 templates, 137 items, 9 images, template-time schedule, and `SKIP` for Closing Checklist Sushi Rolling Machine.
+
+---
+
+## v2.5.6 (2026-05-27)
+
+- Added template-time scheduler mode: Auto Mode can run only the inspections assigned to the current template time instead of the full CSV every slot.
+- Scheduler now derives template times from CSV `run_time` / `schedule_time` / `run_at`, falling back to each template's `Conducted on` answer.
+- Updated Yummi Sushi schedule groups: 6AM opening, 7AM hot food/batch/pH, 9AM/10AM/11AM/1PM/4PM, and 5PM closing/case photos.
+- Added `SKIP` answer support for questions that should be present but not clicked, including Closing Checklist `Sushi Rolling Machine (If Applicable)`.
+
+---
+
 ## v2.5.5 (2026-05-27)
 
 - Added missed-schedule catch-up: if Windows boots or the GUI starts shortly after a configured run time, Auto Mode runs the missed slot instead of waiting until the next day.

@@ -13,7 +13,14 @@ from datetime import datetime, date
 
 import customtkinter as ctk
 
-from data_loader import load_data, validate_data, validate_detailed, InspectionData
+from data_loader import (
+    load_data,
+    validate_data,
+    validate_detailed,
+    InspectionData,
+    filter_inspections_for_run_time,
+    get_inspection_schedule_times,
+)
 from automation import AutomationEngine
 from auth import (
     authenticate, init_default_admin, get_saved_session, logout,
@@ -22,12 +29,16 @@ from auth import (
 from session_manager import (
     has_saved_credentials, save_credentials, load_credentials,
     has_saved_session as has_sc_session, clear_all as clear_sc_login,
+    list_account_profiles, save_account_profile, delete_account_profile,
 )
 from notifier import (
     load_telegram_config, save_telegram_config, test_connection as test_telegram,
-    send_daily_summary, send_error_alert,
+    send_daily_summary, send_error_alert, send_success_report,
 )
-from runlock import is_already_run_today, mark_completed, get_remaining, reset_today
+from runlock import (
+    is_already_run_today, mark_completed, get_remaining, reset_today,
+    inspection_run_key,
+)
 from template_lock import (
     fingerprint_inspection,
     get_invalid_templates,
@@ -77,6 +88,55 @@ F = "Segoe UI"
 MAX_CONSECUTIVE_FAILURES = 3
 
 
+def _inspection_account(insp) -> str:
+    return str(getattr(insp, "account_name", "") or "").strip()
+
+
+def _account_label(account_name: str) -> str:
+    return account_name or "default"
+
+
+def _group_by_account(inspections: list) -> list:
+    order = []
+    groups = {}
+    for insp in inspections:
+        account = _inspection_account(insp)
+        if account not in groups:
+            groups[account] = []
+            order.append(account)
+        groups[account].append(insp)
+    return [insp for account in order for insp in groups[account]]
+
+
+def _missing_login_accounts(inspections: list) -> list:
+    missing = []
+    seen = set()
+    for insp in inspections:
+        account = _inspection_account(insp)
+        if account in seen:
+            continue
+        seen.add(account)
+        if not has_sc_session(account) and not has_saved_credentials(account):
+            missing.append(_account_label(account))
+    return missing
+
+
+def _filter_login_ready(inspections: list) -> tuple:
+    ready = []
+    missing = []
+    seen = set()
+    for insp in inspections:
+        account = _inspection_account(insp)
+        if has_sc_session(account) or has_saved_credentials(account):
+            ready.append(insp)
+            continue
+        label = _account_label(account)
+        if label not in seen:
+            missing.append(label)
+            seen.add(label)
+    return ready, missing
+
+
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -100,6 +160,8 @@ class App(ctk.CTk):
         self._scheduled_run = False
         self._run_errors = []
         self._full_inspections = None
+        self._schedule_full_inspections = None
+        self._active_schedule_time = ""
         self.selected_inspection_index = None
         self._run_active = False
         self._waiting_for_schedule = False
@@ -134,12 +196,12 @@ class App(ctk.CTk):
 
     def _from_tray(self):
         if self.tray: self.tray.hide()
-        self.after(0, lambda: (self.deiconify(), self.lift(), self.focus_force()))
+        self._safe_after(0, lambda: (self.deiconify(), self.lift(), self.focus_force()))
 
     def _quit(self):
         if self.scheduler: self.scheduler.stop()
         if self.tray: self.tray.hide()
-        self.after(0, self.destroy)
+        self._safe_after(0, self.destroy)
 
     # â•â•â•â•â•â•â•â•â•â•â• LOGIN â•â•â•â•â•â•â•â•â•â•â•
     def _login(self):
@@ -287,10 +349,10 @@ class App(ctk.CTk):
         self._pg_auto()
 
         # Auto-load last used config
-        self.after(500, self._auto_load_last_config)
+        self._safe_after(500, self._auto_load_last_config)
 
         # Auto-check for updates on startup (silent, non-blocking)
-        self.after(2000, self._startup_update_check)
+        self._safe_after(2000, self._startup_update_check)
 
     # â•â•â•â•â•â•â•â•â•â•â• PAGE: AUTOMATION â•â•â•â•â•â•â•â•â•â•â•
     def _pg_auto(self):
@@ -514,6 +576,16 @@ class App(ctk.CTk):
         self.se = ctk.BooleanVar(value=sched.get("enabled", False))
         ctk.CTkSwitch(r, text="  Bật lịch hẹn", variable=self.se, font=ctk.CTkFont(family=F, size=12),
                       text_color=TXT, progress_color=TEAL).pack(side="left")
+        self.template_times_var = ctk.BooleanVar(value=sched.get("template_times", True))
+        ctk.CTkCheckBox(
+            r,
+            text="Dùng giờ theo từng template trong CSV",
+            variable=self.template_times_var,
+            font=ctk.CTkFont(family=F, size=10),
+            text_color=DIM,
+            border_color=BORDER,
+            checkmark_color=TEAL,
+        ).pack(side="left", padx=(18, 0))
 
         # Multi-time section
         c2 = self._card("Giờ chạy (nhiều giờ/ngày)")
@@ -537,6 +609,26 @@ class App(ctk.CTk):
         ctk.CTkButton(add_row, text="+ Thêm giờ", width=90, height=28, corner_radius=5,
                       fg_color=TEAL, hover_color=TEAL_H, font=ctk.CTkFont(family=F, size=10),
                       command=self._add_sched_time).pack(side="left")
+        ctk.CTkButton(add_row, text="Lấy giờ từ CSV", width=100, height=28, corner_radius=5,
+                      fg_color="transparent", hover_color=ELEVATED, border_width=1, border_color=BORDER,
+                      text_color=TEAL, font=ctk.CTkFont(family=F, size=10),
+                      command=self._load_times_from_csv).pack(side="left", padx=(8, 0))
+        if self.inspections and sched.get("template_times", True):
+            preview = []
+            for insp in self.inspections:
+                if getattr(insp, "run_time", ""):
+                    account = getattr(insp, "account_name", "")
+                    suffix = f" ({account})" if account else ""
+                    preview.append(f"{insp.run_time} - {insp.template_name}{suffix}")
+            if preview:
+                ctk.CTkLabel(
+                    c2,
+                    text=" | ".join(preview[:6]) + (" ..." if len(preview) > 6 else ""),
+                    font=ctk.CTkFont(family=F, size=9),
+                    text_color=MUTED,
+                    wraplength=760,
+                    justify="left",
+                ).pack(anchor="w", padx=12, pady=(0, 8))
 
         # Days
         c3 = self._card("Ngày trong tuần")
@@ -589,6 +681,18 @@ class App(ctk.CTk):
             self._sched_times.remove(time_val)
             self._render_times_list()
 
+    def _load_times_from_csv(self):
+        if not self.inspections:
+            self._load()
+        times = get_inspection_schedule_times(self.inspections)
+        if not times:
+            messagebox.showwarning("Lịch", "Không tìm thấy giờ chạy trong CSV.")
+            return
+        self._sched_times = times
+        if hasattr(self, "template_times_var"):
+            self.template_times_var.set(True)
+        self._render_times_list()
+
     # â•â•â•â•â•â•â•â•â•â•â• PAGE: SETTINGS â•â•â•â•â•â•â•â•â•â•â•
     def _pg_settings(self):
         self._cls()
@@ -614,6 +718,65 @@ class App(ctk.CTk):
         if hc:
             cr = load_credentials()
             if cr: self.sce.insert(0, cr[0])
+
+        # Named SafetyCulture account profiles
+        c_profiles = self._card("SafetyCulture profiles")
+        profiles = list_account_profiles()
+        if profiles:
+            for name, profile in profiles.items():
+                email = profile.get("email", "")
+                folder_url = profile.get("template_folder_url", "")
+                desc = f"{name} | {email}"
+                if folder_url:
+                    desc += " | folder URL saved"
+                ctk.CTkLabel(
+                    c_profiles,
+                    text=desc,
+                    font=ctk.CTkFont(family=F, size=10),
+                    text_color=DIM,
+                ).pack(anchor="w", padx=12, pady=(0, 3))
+        else:
+            ctk.CTkLabel(
+                c_profiles,
+                text="CSV dùng cột account/account_profile để gọi profile tại đây.",
+                font=ctk.CTkFont(family=F, size=10),
+                text_color=MUTED,
+            ).pack(anchor="w", padx=12, pady=(0, 6))
+
+        profile_row = ctk.CTkFrame(c_profiles, fg_color="transparent")
+        profile_row.pack(fill="x", padx=12, pady=(4, 10))
+        self.sc_profile_name = ctk.CTkEntry(
+            profile_row, placeholder_text="Profile", width=105, height=32,
+            corner_radius=6, border_color=BORDER,
+        )
+        self.sc_profile_name.pack(side="left", padx=(0, 4))
+        self.sc_profile_email = ctk.CTkEntry(
+            profile_row, placeholder_text="Email", width=170, height=32,
+            corner_radius=6, border_color=BORDER,
+        )
+        self.sc_profile_email.pack(side="left", padx=(0, 4))
+        self.sc_profile_password = ctk.CTkEntry(
+            profile_row, placeholder_text="Password", show="*", width=135, height=32,
+            corner_radius=6, border_color=BORDER,
+        )
+        self.sc_profile_password.pack(side="left", padx=(0, 4))
+        self.sc_profile_folder = ctk.CTkEntry(
+            profile_row, placeholder_text="Folder URL", width=210, height=32,
+            corner_radius=6, border_color=BORDER,
+        )
+        self.sc_profile_folder.pack(side="left", padx=(0, 5))
+        ctk.CTkButton(
+            profile_row, text="Lưu", width=50, height=32, corner_radius=6,
+            fg_color=GREEN, hover_color="#16A34A",
+            font=ctk.CTkFont(family=F, size=10),
+            command=self._save_sc_profile,
+        ).pack(side="left", padx=(0, 3))
+        ctk.CTkButton(
+            profile_row, text="Xóa", width=50, height=32, corner_radius=6,
+            fg_color=RED, hover_color=RED_H,
+            font=ctk.CTkFont(family=F, size=10),
+            command=self._del_sc_profile,
+        ).pack(side="left")
 
         # License
         c2 = self._card("License")
@@ -891,7 +1054,7 @@ class App(ctk.CTk):
         text = f"Tổng inspection: {total} | Đã chạy: {done} | Thành công: {success} | Lỗi: {failed} | Còn lại: {remaining}"
         self._run_stats_text = text
         self._log(text)
-        self.after(0, lambda: self._safe_config("run_stat_lbl", text=text))
+        self._safe_after(0, lambda: self._safe_config("run_stat_lbl", text=text))
 
     def _render_inspection_list(self):
         if not self.inspections:
@@ -1012,6 +1175,8 @@ class App(ctk.CTk):
                 ).pack(side="left", padx=(10, 6))
 
                 meta = f"{insp.site_location[:28]} | {len(insp.items)} câu"
+                if getattr(insp, "account_name", ""):
+                    meta += f" | {insp.account_name[:18]}"
                 ctk.CTkLabel(
                     row,
                     text=meta,
@@ -1219,10 +1384,48 @@ class App(ctk.CTk):
             n, items = len(self.inspections), sum(len(i.items) for i in self.inspections)
             self._safe_config("load_lbl", text=f"{n} insp - {items} items", text_color=GREEN)
             self._log(f"Loaded {n} inspection(s), {items} items")
+            self._sync_template_schedule_from_data()
             self._render_inspection_list()
             self._sync_run_controls()
         except Exception as e:
             self._safe_config("load_lbl", text=str(e)[:40], text_color=RED)
+            self._render_inspection_list()
+
+    def _sync_template_schedule_from_data(self):
+        cfg = load_schedule()
+        if not cfg.get("template_times", True) or not self.inspections:
+            return
+        times = get_inspection_schedule_times(self.inspections)
+        if not times:
+            return
+        cfg["times"] = times
+        cfg["template_times"] = True
+        save_schedule(cfg)
+        if self.scheduler:
+            self.scheduler.update_config(cfg)
+        self._log(f"Template schedule: {', '.join(times)}")
+
+    def _prepare_scheduled_subset(self, scheduled_time: str) -> bool:
+        cfg = load_schedule()
+        if not scheduled_time or not cfg.get("template_times", True):
+            return True
+        source = self._full_inspections or self.inspections
+        matched = filter_inspections_for_run_time(source, scheduled_time)
+        if not matched:
+            self._log(f"Không có template nào đặt giờ {scheduled_time}; bỏ qua slot này.")
+            return False
+        self._schedule_full_inspections = list(source)
+        self.inspections = matched
+        names = ", ".join(i.template_name for i in matched)
+        self._log(f"Lịch {scheduled_time}: chạy {len(matched)} template - {names}")
+        self._render_inspection_list()
+        return True
+
+    def _restore_scheduled_subset(self):
+        if self._schedule_full_inspections:
+            self.inspections = self._schedule_full_inspections
+            self._schedule_full_inspections = None
+            self._active_schedule_time = ""
             self._render_inspection_list()
 
     def _test_run(self):
@@ -1431,6 +1634,9 @@ class App(ctk.CTk):
             return
 
         cfg = load_schedule()
+        if cfg.get("template_times", True):
+            self._sync_template_schedule_from_data()
+            cfg = load_schedule()
         if not cfg.get("enabled"):
             self._log("Chưa bật lịch hẹn. Vào tab Lịch hẹn, bật lịch và lưu giờ chạy trước.")
             messagebox.showwarning("Lịch hẹn", "Chưa bật lịch hẹn. Vào tab Lịch hẹn, bật lịch và lưu giờ chạy trước.")
@@ -1449,10 +1655,14 @@ class App(ctk.CTk):
                 self._log(f"Đã trễ lịch {scheduled_time}; chạy bù Auto Mode full CSV.")
             else:
                 self._log(f"Đúng giờ lịch {scheduled_time}. Bắt đầu Auto Mode full CSV.")
-            mark_schedule_run(cfg, scheduled_time)
-            if self.scheduler:
-                self.scheduler.update_config(cfg)
-            self._start(scheduled=True)
+            if not self._prepare_scheduled_subset(scheduled_time):
+                mark_schedule_run(cfg, scheduled_time)
+                if self.scheduler:
+                    self.scheduler.update_config(cfg)
+                self._set_waiting_for_next_schedule("Chờ lịch")
+                return
+            self._active_schedule_time = scheduled_time
+            self._start(scheduled=True, schedule_slot_to_mark=scheduled_time)
             return
 
         self._ensure_scheduler_running(cfg)
@@ -1472,9 +1682,9 @@ class App(ctk.CTk):
         self._set_run_stats(len(self.inspections), 0, 0, 0)
         self._sync_run_controls()
 
-    def _start(self, scheduled=False):
+    def _start(self, scheduled=False, schedule_slot_to_mark=""):
         self._force_scheduled_start = False
-        self._schedule_slot_to_mark = ""
+        self._schedule_slot_to_mark = schedule_slot_to_mark or ""
         if not self.inspections:
             if self.fv.get().strip():
                 self._load()
@@ -1509,6 +1719,9 @@ class App(ctk.CTk):
         cfg = load_schedule()
         if not cfg.get("enabled"):
             return False
+        if cfg.get("template_times", True):
+            self._sync_template_schedule_from_data()
+            cfg = load_schedule()
 
         due, scheduled_time, reason = is_schedule_due_now(cfg)
         if due:
@@ -1518,6 +1731,13 @@ class App(ctk.CTk):
                 self._log(f"Đúng giờ lịch {scheduled_time}. Bắt đầu Auto Mode.")
             self._force_scheduled_start = True
             self._schedule_slot_to_mark = scheduled_time
+            self._active_schedule_time = scheduled_time
+            if not self._prepare_scheduled_subset(scheduled_time):
+                mark_schedule_run(cfg, scheduled_time)
+                if self.scheduler:
+                    self.scheduler.update_config(cfg)
+                self._set_waiting_for_next_schedule()
+                return True
             return False
 
         if reason == "already ran":
@@ -1548,6 +1768,72 @@ class App(ctk.CTk):
         if cfg.get("enabled") and not self.scheduler.is_running():
             self.scheduler.start()
 
+    def _set_waiting_for_next_schedule(self, context: str = "") -> bool:
+        cfg = load_schedule()
+        if not cfg.get("enabled"):
+            return False
+        if cfg.get("template_times", True) and self.inspections:
+            self._sync_template_schedule_from_data()
+            cfg = load_schedule()
+        self._ensure_scheduler_running(cfg)
+        target = get_next_run_datetime(cfg)
+        self._waiting_for_schedule = True
+        if target:
+            self._set_run_status(f"Chờ lịch {target.strftime('%H:%M')}", AMBER)
+            prefix = f"{context} " if context else ""
+            self._log(f"{prefix}Tiếp tục chờ lịch kế tiếp: {target.strftime('%d/%m/%Y %H:%M')}")
+        else:
+            self._set_run_status("Chờ lịch", AMBER)
+            prefix = f"{context} " if context else ""
+            self._log(f"{prefix}Đang chờ lịch, nhưng chưa tìm được giờ chạy kế tiếp.")
+        self._sync_run_controls()
+        return True
+
+    def _auto_enter_schedule_mode(self, reason: str = "Startup"):
+        """Enter always-on schedule mode without requiring a button click."""
+        if self._is_worker_running():
+            return
+        cfg = load_schedule()
+        if not cfg.get("enabled"):
+            return
+        if not self.inspections and self.fv.get().strip():
+            self._load()
+        if not self.inspections:
+            self._log(f"{reason}: chưa có dữ liệu để chờ lịch.")
+            self._set_waiting_for_next_schedule(reason)
+            return
+        if not self._ensure_validated_before_start(allow_prompt=False):
+            self._log(f"{reason}: dữ liệu chưa validate OK, chưa tự chạy lịch.")
+            self._set_waiting_for_next_schedule(reason)
+            return
+
+        self.rv.set(False)
+        self.av.set(True)
+        self.sv.set(False)
+        self.adv.set(True)
+        self._save_current_settings()
+
+        if cfg.get("template_times", True):
+            self._sync_template_schedule_from_data()
+            cfg = load_schedule()
+        due, scheduled_time, due_reason = is_schedule_due_now(cfg)
+        if due:
+            if due_reason == "missed":
+                self._log(f"{reason}: chạy bù lịch {scheduled_time}.")
+            else:
+                self._log(f"{reason}: đúng giờ lịch {scheduled_time}, bắt đầu Auto Mode.")
+            if not self._prepare_scheduled_subset(scheduled_time):
+                mark_schedule_run(cfg, scheduled_time)
+                if self.scheduler:
+                    self.scheduler.update_config(cfg)
+                self._set_waiting_for_next_schedule(reason)
+                return
+            self._active_schedule_time = scheduled_time
+            self._start(scheduled=True, schedule_slot_to_mark=scheduled_time)
+            return
+
+        self._set_waiting_for_next_schedule(reason)
+
     def _pause(self):
         if not self.engine: return
         if self.engine._paused:
@@ -1564,7 +1850,8 @@ class App(ctk.CTk):
         self._set_run_status("Stopping", RED)
 
     def _run(self):
-        self.engine = AutomationEngine(log_callback=self._log)
+        self.engine = None
+        current_account = None
         total = 0
         skipped_count = 0
         run_success = 0
@@ -1580,24 +1867,6 @@ class App(ctk.CTk):
                 scheduled=self._scheduled_run,
             )
         try:
-            self.engine.start_browser()
-            self.engine.wait_for_login()
-
-            # Health check
-            self._log("Running health check...")
-            hc_ok, hc_msg = self.engine.health_check()
-            if not hc_ok:
-                self._log(f"Health check FAILED: {hc_msg}")
-                screenshot = None
-                try:
-                    screenshot = self.engine._screenshot_error("health_check_failed")
-                except Exception:
-                    screenshot = None
-                send_error_alert(f"Health check failed: {hc_msg}", screenshot)
-                return
-
-            self._log("Health check OK")
-
             # Template locks are setup warnings only. Production Auto Mode must
             # not stop just because the CSV fingerprint changed after an app or
             # customer data update; validation and per-item submit guards still
@@ -1615,7 +1884,7 @@ class App(ctk.CTk):
                 skipped_count = len(self.inspections) - len(remaining)
                 if skipped_count > 0:
                     self._log(f"Skipping {skipped_count} already completed today")
-                run_list = remaining
+                run_list = _group_by_account(remaining)
             else:
                 run_list = self.inspections
 
@@ -1623,15 +1892,69 @@ class App(ctk.CTk):
             if total == 0:
                 self._log("All inspections already completed today")
                 return
+            if self._scheduled_run:
+                before_login_filter = len(run_list)
+                run_list, missing_accounts = _filter_login_ready(run_list)
+                if missing_accounts:
+                    msg = (
+                        "Scheduled run skipped account without SafetyCulture session/credentials: "
+                        + ", ".join(missing_accounts)
+                    )
+                    self._log(msg)
+                    send_error_alert(msg)
+                    skipped_count += before_login_filter - len(run_list)
+                    total = len(run_list)
+                    if total == 0:
+                        return
+            account_blocks = []
+            for insp in run_list:
+                label = _account_label(_inspection_account(insp))
+                if label not in account_blocks:
+                    account_blocks.append(label)
+            if auto_submit and len(account_blocks) > 1:
+                self._log("Account blocks for this run: " + " -> ".join(account_blocks))
 
             run_success = 0
             run_failed = 0
             self._set_run_stats(total, 0, 0, 0)
 
             for idx, insp in enumerate(run_list):
-                if self.engine._stopped: break
+                if self.engine and self.engine._stopped:
+                    break
+                account = _inspection_account(insp)
+                if self.engine is None or account != current_account:
+                    if self.engine is not None:
+                        try:
+                            self.engine.close_browser()
+                        except Exception:
+                            pass
+                    current_account = account
+                    self._log(f"Switching SafetyCulture account: {_account_label(account)}")
+                    self.engine = AutomationEngine(
+                        log_callback=self._log,
+                        account_name=account,
+                        allow_manual_login=not self._scheduled_run,
+                    )
+                    self.engine.start_browser()
+                    self.engine.wait_for_login()
+
+                    self._log("Running health check...")
+                    hc_ok, hc_msg = self.engine.health_check()
+                    if not hc_ok:
+                        self._log(f"Health check FAILED: {hc_msg}")
+                        screenshot = None
+                        try:
+                            screenshot = self.engine._screenshot_error("health_check_failed")
+                        except Exception:
+                            screenshot = None
+                        send_error_alert(f"Health check failed: {hc_msg}", screenshot)
+                        return
+                    self._log("Health check OK")
                 if self.adv.get(): insp.inspection_date = date.today().isoformat()
-                self._log(f"\n[{idx+1}/{total}] {insp.template_name} | {insp.site_location}")
+                self._log(
+                    f"\n[{idx+1}/{total}] {insp.template_name} | {insp.site_location}"
+                    + (f" | account={account}" if account else "")
+                )
                 if auto_submit:
                     update_run_state(
                         status="running",
@@ -1654,10 +1977,25 @@ class App(ctk.CTk):
                 if ok:
                     consecutive_failures = 0
                     if auto_submit:
-                        verified = self.engine.verify_inspection_saved(insp.template_name)
+                        verified = self.engine.verify_inspection_saved(insp.template_name, insp)
                         if not verified:
                             self._log("  Warning: submitted but not verified in list yet")
-                        mark_completed(insp.template_name, insp.site_location)
+                        success_ss = self.engine.capture_success_screenshot(insp.template_name)
+                        send_success_report(
+                            insp.template_name,
+                            insp.site_location,
+                            len(insp.items),
+                            len(self.engine.item_errors),
+                            screenshot_path=success_ss,
+                            verified=verified,
+                            scheduled_time=self._active_schedule_time if self._scheduled_run else "",
+                            url=self.engine.page.url if self.engine and self.engine.page else "",
+                        )
+                        mark_completed(
+                            insp.template_name,
+                            insp.site_location,
+                            getattr(insp, "account_name", ""),
+                        )
                     else:
                         # Test mode success marks the template as tested.
                         mark_template_tested(
@@ -1730,7 +2068,7 @@ class App(ctk.CTk):
 
                 if self.sv.get() and idx < total-1 and not self.engine._stopped:
                     self._log("  Waiting"); self.engine.pause()
-                    self.after(0, lambda: self._safe_config("bpause", text="Resume"))
+                    self._safe_after(0, lambda: self._safe_config("bpause", text="Resume"))
                     self._set_run_status("Waiting", AMBER)
                     while self.engine._paused and not self.engine._stopped:
                         import time; time.sleep(0.5)
@@ -1752,14 +2090,18 @@ class App(ctk.CTk):
                     failed=run_failed, skipped=skipped_count,
                 )
             except: pass
-            self.engine.close_browser()
+            if self.engine:
+                self.engine.close_browser()
             clear_run_state()
-            self.after(0, self._done)
+            self._safe_after(0, self._done)
 
-    def _sched_run(self):
-        self.after(0, self._start_scheduled_run)
+    def _sched_run(self, scheduled_time=None):
+        self._safe_after(0, lambda: self._start_scheduled_run(scheduled_time))
 
-    def _start_scheduled_run(self):
+    def _start_scheduled_run(self, scheduled_time=None):
+        if self.worker_thread and self.worker_thread.is_alive():
+            self._log(f"Scheduled {scheduled_time or ''}: automation đang chạy, giữ slot để chạy bù sau.")
+            return
         if getattr(self, "_full_inspections", None):
             self.inspections = self._full_inspections
             self._full_inspections = None
@@ -1770,19 +2112,37 @@ class App(ctk.CTk):
         if not self.inspections:
             self._log("Scheduled: no data loaded")
             return
+        if scheduled_time and not self._prepare_scheduled_subset(scheduled_time):
+            cfg = load_schedule()
+            mark_schedule_run(cfg, scheduled_time)
+            if self.scheduler:
+                self.scheduler.update_config(cfg)
+            self._set_waiting_for_next_schedule("Scheduled")
+            return
+        self._active_schedule_time = scheduled_time or ""
         self.adv.set(True); self.rv.set(False); self.av.set(True); self.sv.set(False)
         self._save_current_settings()
-        self._start(scheduled=True)
+        self._start(scheduled=True, schedule_slot_to_mark=scheduled_time or "")
 
     def _done(self):
+        was_scheduled = self._scheduled_run
+        had_errors = bool(self._run_errors)
         self._scheduled_run = False
         self._run_active = False
+        self._restore_scheduled_subset()
         # Restore full inspection list if was test/retry run
         if hasattr(self, '_full_inspections') and self._full_inspections:
             self.inspections = self._full_inspections
             self._full_inspections = None
             self._render_inspection_list()
-        if self._run_errors:
+        if was_scheduled and load_schedule().get("enabled"):
+            if had_errors:
+                self._log(f"Scheduled run kết thúc với {len(self._run_errors)} lỗi; vẫn tiếp tục chờ lịch kế tiếp.")
+            else:
+                self._log("Scheduled run hoàn tất; tự chuyển sang chờ lịch kế tiếp.")
+            self._set_waiting_for_next_schedule()
+            return
+        if had_errors:
             self._run_state_text = f"Lỗi: {len(self._run_errors)}"
             self._run_state_color = RED
         else:
@@ -1799,7 +2159,7 @@ class App(ctk.CTk):
         from runlock import get_today_completed
         completed = get_today_completed()
         failed = [i for i in self.inspections
-                  if f"{i.template_name}|{i.site_location}" not in completed]
+                  if inspection_run_key(i) not in completed]
         if not failed:
             messagebox.showinfo("OK", "Không có inspection nào cần retry (tất cả đã OK)")
             return
@@ -1810,7 +2170,14 @@ class App(ctk.CTk):
         self._start()
 
     def _save_sched(self):
+        template_times = self.template_times_var.get() if hasattr(self, "template_times_var") else True
         times = sorted(self._sched_times) if hasattr(self, '_sched_times') else ["05:00"]
+        if template_times:
+            if not self.inspections and self.fv.get().strip():
+                self._load()
+            derived = get_inspection_schedule_times(self.inspections)
+            if derived:
+                times = derived
         if not times:
             messagebox.showwarning("", "Thêm ít nhất 1 giờ chạy")
             return
@@ -1819,6 +2186,7 @@ class App(ctk.CTk):
             "times": times,
             "days": [k for k, v in self.dvs.items() if v.get()],
             "auto_date_today": True,
+            "template_times": template_times,
             "runs_today": load_schedule().get("runs_today", []),
         }
         save_schedule(cfg)
@@ -1828,7 +2196,8 @@ class App(ctk.CTk):
             self.scheduler.update_config(cfg)
             self.scheduler.start()
             times_str = ", ".join(times)
-            messagebox.showinfo("OK", f"Lịch: [{times_str}] hằng ngày")
+            mode = "theo template CSV" if template_times else "full CSV"
+            messagebox.showinfo("OK", f"Lịch {mode}: [{times_str}] hằng ngày")
         else:
             if self.scheduler:
                 self.scheduler.stop()
@@ -1854,7 +2223,8 @@ class App(ctk.CTk):
         if last_file and os.path.exists(last_file):
             self._load()
             self._log("Data auto-loaded from last session")
-            self.after(1500, self._resume_interrupted_auto_run)
+            self._safe_after(1500, self._resume_interrupted_auto_run)
+            self._safe_after(2500, lambda: self._auto_enter_schedule_mode("Startup"))
 
     def _resume_interrupted_auto_run(self):
         state = load_run_state()
@@ -1905,6 +2275,35 @@ class App(ctk.CTk):
 
     def _del_sc(self):
         if messagebox.askyesno("","Xóa credentials?"): clear_sc_login(); self._pg_settings()
+
+    def _save_sc_profile(self):
+        name = self.sc_profile_name.get().strip() if hasattr(self, "sc_profile_name") else ""
+        email = self.sc_profile_email.get().strip() if hasattr(self, "sc_profile_email") else ""
+        password = self.sc_profile_password.get().strip() if hasattr(self, "sc_profile_password") else ""
+        folder_url = self.sc_profile_folder.get().strip() if hasattr(self, "sc_profile_folder") else ""
+        if not name or not email or not password:
+            messagebox.showwarning("", "Nhập profile + email + password")
+            return
+        if folder_url and "safetyculture.com" not in folder_url:
+            messagebox.showwarning("URL", "Folder URL phải là link SafetyCulture hoặc để trống.")
+            return
+        if save_account_profile(name, email, password, template_folder_url=folder_url):
+            messagebox.showinfo("OK", f"Đã lưu profile: {name}")
+            self._pg_settings()
+        else:
+            messagebox.showerror("Error", "Không lưu được profile")
+
+    def _del_sc_profile(self):
+        name = self.sc_profile_name.get().strip() if hasattr(self, "sc_profile_name") else ""
+        if not name:
+            messagebox.showwarning("", "Nhập profile cần xóa")
+            return
+        if messagebox.askyesno("", f"Xóa SafetyCulture profile '{name}'?"):
+            if delete_account_profile(name):
+                messagebox.showinfo("OK", f"Đã xóa profile: {name}")
+            else:
+                messagebox.showwarning("", "Không tìm thấy profile")
+            self._pg_settings()
 
     def _act_lic(self):
         k = self.lke.get().strip()
@@ -2013,6 +2412,14 @@ class App(ctk.CTk):
         except tk.TclError:
             pass
 
+    def _safe_after(self, delay_ms, callback):
+        try:
+            if not self.winfo_exists():
+                return None
+            return self.after(delay_ms, callback)
+        except (tk.TclError, RuntimeError):
+            return None
+
     def _safe_progress_set(self, value):
         self._run_progress = max(0.0, min(1.0, float(value or 0)))
         widget = self._live_widget("prog")
@@ -2033,7 +2440,7 @@ class App(ctk.CTk):
             self._safe_config("slbl", text=self._run_state_text, text_color=self._run_state_color)
             if progress is not None:
                 self._safe_progress_set(self._run_progress)
-        self.after(0, apply)
+        self._safe_after(0, apply)
 
     def _is_worker_running(self):
         return bool(self.worker_thread and self.worker_thread.is_alive())
@@ -2071,7 +2478,7 @@ class App(ctk.CTk):
                 self.logbox.insert("end", line+"\n")
                 self.logbox.see("end")
                 self.logbox.configure(state="disabled")
-        self.after(0, d)
+        self._safe_after(0, d)
 
     def _clog(self):
         self.logbox.configure(state="normal"); self.logbox.delete("1.0","end"); self.logbox.configure(state="disabled")
