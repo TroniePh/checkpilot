@@ -1,6 +1,6 @@
 {
-  "version": "2.6.1",
-  "release_date": "2026-06-06",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.6.1/CheckPilot_Setup_v2.6.1.exe",
-  "changelog": "v2.6.1: Fixes ACE Daily Food Safety Log section-scoped answering so repeated 2.1/2.2/2.3 questions are not filled in the wrong section, keeps Title Page questions such as What Type of Operation discoverable, and hardens final signature drawing."
+  "version": "2.6.2",
+  "release_date": "2026-06-08",
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.6.2/CheckPilot_Setup_v2.6.2.exe",
+  "changelog": "v2.6.2: Fixes ACE Daily Food Safety Log auto-submit blocking by treating hidden Conducted on as SafetyCulture default and answering unique visible questions even when SafetyCulture omits the CSV section heading."
 }

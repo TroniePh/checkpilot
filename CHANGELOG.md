@@ -1,5 +1,13 @@
 # Changelog — CheckPilot™
 
+## v2.6.2 (2026-06-08)
+
+- Fixed ACE Daily Food Safety Log Auto Mode blocking before `Complete inspection` when SafetyCulture does not render the `Conducted on` field.
+- Added a safe fallback for visible unique questions when SafetyCulture omits the CSV section heading, fixing `Does This Store Prepare and Sell Any Foods Under TPHC?`.
+- Kept duplicate-question protection in place so repeated ACE sections such as `2.1`, `2.2`, and `2.3` are not answered in the wrong section.
+
+---
+
 ## v2.6.1 (2026-06-06)
 
 - Fixed ACE Daily Food Safety Log section matching so repeated questions in `2.1`, `2.2`, and `2.3` are filled only in the intended section.

@@ -1078,8 +1078,8 @@ class AutomationEngine:
             # Find and click the Conducted on input to open picker
             conducted = self.page.locator('text="Conducted on"').first
             if conducted.count() == 0:
-                self._log("    WARN: Conducted on field not found")
-                return False
+                self._log("    Conducted on not visible; using SafetyCulture default")
+                return True
 
             conducted.scroll_into_view_if_needed()
             time.sleep(0.3)
@@ -1111,18 +1111,18 @@ class AutomationEngine:
                 else:
                     # Close picker without selecting
                     self.page.keyboard.press("Escape")
-                    self._log(f"    WARN: Time '{time_value}' not found in picker")
-                    return False
+                    self._log(f"    WARN: Time '{time_value}' not found in picker; using default")
+                    return True
 
-            self._log("    WARN: Conducted on input not found")
-            return False
+            self._log("    WARN: Conducted on input not found; using default")
+            return True
         except Exception as e:
-            self._log(f"    Conducted on error: {str(e)[:40]}")
+            self._log(f"    WARN: Conducted on skipped: {str(e)[:40]}")
             try:
                 self.page.keyboard.press("Escape")
             except:
                 pass
-            return False
+            return True
 
     def _tick_checkbox(self, question: str, section: str = "", alias: str = "", next_section: str = "") -> bool:
         """Tick a checkbox next to a question text."""
@@ -2351,7 +2351,7 @@ class AutomationEngine:
                         return matches.length ? matches[0] : null;
                     };
                     const sectionAnchor = findSectionAnchor(wantedSectionCompact);
-                    if (wantedSectionCompact && !sectionAnchor) return "";
+                    const missingSectionScope = !!(wantedSectionCompact && !sectionAnchor);
                     const nextSectionAnchor = (() => {
                         if (!sectionAnchor) return null;
                         const anchor = findSectionAnchor(wantedNextSectionCompact);
@@ -2362,16 +2362,17 @@ class AutomationEngine:
                         "label", "span", "p", "div", "h1", "h2", "h3", "h4",
                         "[data-testid]", "[role='heading']"
                     ].join(",");
-                    let best = null;
-                    let bestScore = Number.MAX_SAFE_INTEGER;
+                    let candidates = [];
                     for (const node of Array.from(document.querySelectorAll(selector))) {
                         if (!rendered(node) || !matchesQuestion(node)) continue;
+                        if (missingSectionScope && !visible(node)) continue;
                         const nodeRect = node.getBoundingClientRect();
                         if (sectionAnchor && nodeRect.top < sectionAnchor.rect.top - 20) continue;
                         if (nextSectionAnchor && nodeRect.top >= nextSectionAnchor.rect.top - 10) continue;
                         let el = node;
                         for (let depth = 0; depth < 8 && el; depth += 1, el = el.parentElement) {
                             if (!rendered(el) || !hasControls(el)) continue;
+                            if (missingSectionScope && !visible(el)) continue;
                             const rect = el.getBoundingClientRect();
                             const area = rect.width * rect.height;
                             if (area <= 0 || area > 700000) continue;
@@ -2387,13 +2388,15 @@ class AutomationEngine:
                                 const scopeText = compact(el.innerText || el.textContent || "");
                                 if (scopeText.includes(wantedSectionCompact)) score -= 5000000;
                             }
-                            if (score < bestScore) {
-                                best = el;
-                                bestScore = score;
+                            if (!candidates.some((c) => c.el === el)) {
+                                candidates.push({ el, score });
                             }
                             break;
                         }
                     }
+                    if (missingSectionScope && candidates.length !== 1) return "";
+                    candidates.sort((a, b) => a.score - b.score);
+                    const best = candidates.length ? candidates[0].el : null;
                     if (!best) return "";
                     const id = "cp-q-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
                     best.setAttribute("data-checkpilot-question-container", id);
