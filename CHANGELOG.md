@@ -1,5 +1,13 @@
 # Changelog — CheckPilot™
 
+## v2.6.3 (2026-06-09)
+
+- Fixed ACE Daily Food Safety Log Hot Food question matching when SafetyCulture renders the same visible question through nested DOM containers.
+- Keeps duplicate-question protection active for repeated ACE fields across `2.1`, `2.2`, `2.3`, `4.1`, and `4.2`.
+- Re-verified ACE regression coverage for hidden `Conducted on`, unique visible fallback questions, duplicate-question blocking, and section-scoped temperature fields.
+
+---
+
 ## v2.6.2 (2026-06-08)
 
 - Fixed ACE Daily Food Safety Log Auto Mode blocking before `Complete inspection` when SafetyCulture does not render the `Conducted on` field.

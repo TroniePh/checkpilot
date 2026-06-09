@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $Root
 
-$Version = "2.6.2"
+$Version = "2.6.3"
 $Python = Join-Path $Root "venv\Scripts\python.exe"
 if (-not (Test-Path $Python)) {
     $Python = "python"

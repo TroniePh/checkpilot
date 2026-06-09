@@ -2394,7 +2394,13 @@ class AutomationEngine:
                             break;
                         }
                     }
-                    if (missingSectionScope && candidates.length !== 1) return "";
+                    if (missingSectionScope) {
+                        candidates = candidates
+                            .filter((candidate) => !candidates.some((other) =>
+                                other.el !== candidate.el && candidate.el.contains(other.el)
+                            ));
+                        if (candidates.length !== 1) return "";
+                    }
                     candidates.sort((a, b) => a.score - b.score);
                     const best = candidates.length ? candidates[0].el : null;
                     if (!best) return "";
