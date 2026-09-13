@@ -730,14 +730,18 @@ class App(ctk.CTk):
         ).pack(anchor="w", padx=12, pady=(0, 6))
         table_frame = ctk.CTkFrame(c_profiles, fg_color="transparent")
         table_frame.pack(fill="x", padx=12, pady=(0, 6))
-        columns = ("account", "email", "folder")
+        columns = ("account", "email", "template_count", "templates", "folder")
         self.sc_profile_tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=5)
         self.sc_profile_tree.heading("account", text="Account")
         self.sc_profile_tree.heading("email", text="Email")
+        self.sc_profile_tree.heading("template_count", text="Số template")
+        self.sc_profile_tree.heading("templates", text="Template đang chạy")
         self.sc_profile_tree.heading("folder", text="Template folder")
-        self.sc_profile_tree.column("account", width=150, anchor="w")
-        self.sc_profile_tree.column("email", width=230, anchor="w")
-        self.sc_profile_tree.column("folder", width=300, anchor="w")
+        self.sc_profile_tree.column("account", width=125, anchor="w")
+        self.sc_profile_tree.column("email", width=180, anchor="w")
+        self.sc_profile_tree.column("template_count", width=78, anchor="center")
+        self.sc_profile_tree.column("templates", width=260, anchor="w")
+        self.sc_profile_tree.column("folder", width=220, anchor="w")
         self.sc_profile_tree.pack(fill="x", side="left", expand=True)
         tree_scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.sc_profile_tree.yview)
         tree_scroll.pack(side="right", fill="y")
@@ -2261,12 +2265,36 @@ class App(ctk.CTk):
             return
         for item in tree.get_children():
             tree.delete(item)
+        template_summary = self._sc_profile_template_summary()
         for name, profile in list_account_profiles().items():
+            templates = template_summary.get(name, [])
+            template_text = ", ".join(templates)
+            if len(template_text) > 70:
+                template_text = template_text[:67] + "..."
             tree.insert("", "end", iid=name, values=(
                 name,
                 profile.get("email", ""),
+                len(templates),
+                template_text or "Chưa có trong CSV đang chọn",
                 profile.get("template_folder_url", ""),
             ))
+
+    def _sc_profile_template_summary(self):
+        """Read-only mapping of saved accounts to distinct templates in the selected CSV."""
+        summary = {}
+        inspections = getattr(self, "inspections", None) or []
+        file_path = self.fv.get().strip() if hasattr(self, "fv") else ""
+        if file_path and os.path.exists(file_path):
+            try:
+                inspections = load_data(file_path)
+            except Exception:
+                pass
+        for inspection in inspections:
+            account = str(getattr(inspection, "account_name", "") or "").strip()
+            template = str(getattr(inspection, "template_name", "") or "").strip()
+            if account and template:
+                summary.setdefault(account, set()).add(template)
+        return {account: sorted(names) for account, names in summary.items()}
 
     def _edit_sc_profile_from_table(self, _event=None):
         tree = getattr(self, "sc_profile_tree", None)
@@ -2283,7 +2311,7 @@ class App(ctk.CTk):
         details = get_account_profile_details(old_name) if old_name else {}
         dialog = ctk.CTkToplevel(self)
         dialog.title("Thông tin account" if old_name else "Thêm account")
-        dialog.geometry("480x330")
+        dialog.geometry("520x500")
         dialog.resizable(False, False)
         dialog.transient(self)
         dialog.grab_set()
