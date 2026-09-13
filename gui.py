@@ -18,6 +18,7 @@ from data_loader import (
     validate_data,
     validate_detailed,
     InspectionData,
+    rename_account_in_csv,
     filter_inspections_for_run_time,
     get_inspection_schedule_times,
 )
@@ -30,6 +31,7 @@ from session_manager import (
     has_saved_credentials, save_credentials, load_credentials,
     has_saved_session as has_sc_session, clear_all as clear_sc_login,
     list_account_profiles, save_account_profile, delete_account_profile,
+    rename_account_profile,
 )
 from notifier import (
     load_telegram_config, save_telegram_config, test_connection as test_telegram,
@@ -776,6 +778,13 @@ class App(ctk.CTk):
             fg_color=RED, hover_color=RED_H,
             font=ctk.CTkFont(family=F, size=10),
             command=self._del_sc_profile,
+        ).pack(side="left", padx=(0, 3))
+        ctk.CTkButton(
+            profile_row, text="Đổi tên", width=70, height=32, corner_radius=6,
+            fg_color="transparent", hover_color=ELEVATED,
+            border_width=1, border_color=BORDER, text_color=DIM,
+            font=ctk.CTkFont(family=F, size=10),
+            command=self._rename_sc_profile,
         ).pack(side="left")
 
         # License
@@ -2304,6 +2313,28 @@ class App(ctk.CTk):
             else:
                 messagebox.showwarning("", "Không tìm thấy profile")
             self._pg_settings()
+
+    def _rename_sc_profile(self):
+        old_name = self.sc_profile_name.get().strip() if hasattr(self, "sc_profile_name") else ""
+        if not old_name:
+            messagebox.showwarning("", "Nhập profile cần đổi tên")
+            return
+        new_name = simpledialog.askstring("Đổi tên profile", "Tên profile mới:", parent=self)
+        if not new_name:
+            return
+        new_name = new_name.strip()
+        if rename_account_profile(old_name, new_name):
+            csv_changed = 0
+            fp = self.fv.get().strip() if hasattr(self, "fv") else ""
+            if fp:
+                csv_changed = rename_account_in_csv(fp, old_name, new_name)
+                if csv_changed and os.path.exists(fp):
+                    self._load()
+            extra = f"\nĐã cập nhật {csv_changed} ô account trong CSV đang chọn." if fp else ""
+            messagebox.showinfo("OK", f"Đã đổi profile: {old_name} -> {new_name}{extra}")
+            self._pg_settings()
+        else:
+            messagebox.showwarning("", "Không đổi được. Kiểm tra tên cũ/tên mới có bị trùng không.")
 
     def _act_lic(self):
         k = self.lke.get().strip()

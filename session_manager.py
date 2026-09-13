@@ -162,6 +162,28 @@ def delete_account_profile(account_name: str) -> bool:
     return removed
 
 
+def rename_account_profile(old_name: str, new_name: str) -> bool:
+    old_name = normalize_account_name(old_name)
+    new_name = normalize_account_name(new_name)
+    if not old_name or not new_name or old_name == new_name:
+        return False
+    store = _load_account_store()
+    profiles = store.setdefault("profiles", {})
+    if old_name not in profiles or new_name in profiles:
+        return False
+    profiles[new_name] = profiles.pop(old_name)
+    if not _save_account_store(store):
+        return False
+    old_session = _session_file_for(old_name)
+    new_session = _session_file_for(new_name)
+    try:
+        if os.path.exists(old_session) and not os.path.exists(new_session):
+            os.replace(old_session, new_session)
+    except Exception:
+        pass
+    return True
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # COOKIE / SESSION PERSISTENCE
 # ═══════════════════════════════════════════════════════════════════════════

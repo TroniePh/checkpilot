@@ -1,5 +1,6 @@
 """Load and validate inspection data from Excel/CSV files."""
 import os
+import csv
 import re
 import pandas as pd
 from dataclasses import dataclass, field
@@ -223,6 +224,40 @@ def load_data(file_path: str, image_folder: str = "") -> List[InspectionData]:
         inspections.append(inspection)
 
     return inspections
+
+
+def rename_account_in_csv(file_path: str, old_name: str, new_name: str) -> int:
+    if os.path.splitext(file_path)[1].lower() != ".csv":
+        return 0
+    old_name = str(old_name or "").strip()
+    new_name = str(new_name or "").strip()
+    if not old_name or not new_name or not os.path.exists(file_path):
+        return 0
+
+    with open(file_path, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+        fieldnames = reader.fieldnames or []
+
+    account_cols = [
+        col for col in fieldnames
+        if col.strip().lower().replace(" ", "_") in ACCOUNT_COLUMNS
+    ]
+    changed = 0
+    for row in rows:
+        for col in account_cols:
+            if str(row.get(col, "")).strip() == old_name:
+                row[col] = new_name
+                changed += 1
+
+    if changed:
+        tmp = file_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+        os.replace(tmp, file_path)
+    return changed
 
 
 def validate_data(inspections: List[InspectionData]) -> List[str]:

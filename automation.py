@@ -3700,9 +3700,14 @@ class AutomationEngine:
                         .filter(visible)
                         .map((el) => (el.innerText || el.textContent || "").replace(/\\s+/g, " "))
                         .join(" | ");
-                    return /an error has occurred/i.test(text) &&
+                    return (
+                        /an error has occurred/i.test(text) &&
                         (/please refresh this page/i.test(text) ||
-                         /try answering this question again/i.test(text));
+                         /try answering this question again/i.test(text))
+                    ) || (
+                        /something went wrong/i.test(text) &&
+                        /please check your connection and refresh this page/i.test(text)
+                    );
                 }
                 """
             ))
