@@ -1,5 +1,13 @@
 # Changelog — CheckPilot™
 
+## v2.6.5 (2026-09-13)
+
+- Added a SafetyCulture account table in Settings with double-click editing.
+- Saving a renamed account moves its saved session and updates account/profile columns in the selected CSV.
+- Account details now support editing the login email, password, and template folder URL.
+
+---
+
 ## v2.6.4 (2026-09-13)
 
 - Retry ACE Daily Food Safety Log when SafetyCulture shows the full-page `Something went wrong` error.
