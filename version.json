@@ -1,6 +1,6 @@
 {
-  "version": "2.6.4",
+  "version": "2.6.5",
   "release_date": "2026-09-13",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.6.4/CheckPilot_Setup_v2.6.4.exe",
-  "changelog": "v2.6.4: Retries ACE Daily Food Safety Log when SafetyCulture shows the Something went wrong page, and allows renaming SafetyCulture profiles while updating the selected CSV account columns."
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.6.5/CheckPilot_Setup_v2.6.5.exe",
+  "changelog": "v2.6.5: Adds an editable SafetyCulture account list with double-click details and synchronizes renamed accounts across the selected CSV."
 }
