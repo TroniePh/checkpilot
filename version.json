@@ -1,6 +1,6 @@
 {
-  "version": "2.6.5",
+  "version": "2.6.6",
   "release_date": "2026-09-13",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.6.5/CheckPilot_Setup_v2.6.5.exe",
-  "changelog": "v2.6.5: Adds an editable SafetyCulture account list with double-click details and synchronizes renamed accounts across the selected CSV."
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.6.6/CheckPilot_Setup_v2.6.6.exe",
+  "changelog": "v2.6.6: Fixes the startup crash in v2.6.5 by rebuilding with the complete runtime dependencies."
 }
