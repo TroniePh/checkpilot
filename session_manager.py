@@ -127,6 +127,22 @@ def get_account_profile(account_name: str = "") -> dict:
     }
 
 
+def get_account_profile_details(account_name: str = "") -> dict:
+    """Return editable local profile fields, including the saved password."""
+    account_name = normalize_account_name(account_name)
+    if not account_name:
+        return {}
+    profile = _load_account_store().get("profiles", {}).get(account_name, {})
+    if not isinstance(profile, dict):
+        return {}
+    return {
+        "email": profile.get("email", ""),
+        "password": profile.get("password", ""),
+        "template_folder_url": profile.get("template_folder_url", ""),
+        "template_folder_name": profile.get("template_folder_name", ""),
+    }
+
+
 def save_account_profile(
     account_name: str,
     email: str,

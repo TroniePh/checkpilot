@@ -47,7 +47,7 @@ OPTIONAL_COLUMNS = [
     "account", "account_name", "account_profile", "safetyculture_account", "sc_account",
     "template_folder_url", "template_folder_name",
 ]
-ACCOUNT_COLUMNS = ("account", "account_name", "account_profile", "safetyculture_account", "sc_account")
+ACCOUNT_COLUMNS = ("account", "account_name", "account_profile", "profile", "safetyculture_account", "sc_account")
 NO_ANSWER_VALUES = {"skip", "noanswer", "no answer", "ignore", "none"}
 
 

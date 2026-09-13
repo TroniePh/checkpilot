@@ -7,7 +7,7 @@ import os
 import sys
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, simpledialog
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Optional
 from datetime import datetime, date
 
@@ -30,8 +30,8 @@ from auth import (
 from session_manager import (
     has_saved_credentials, save_credentials, load_credentials,
     has_saved_session as has_sc_session, clear_all as clear_sc_login,
-    list_account_profiles, save_account_profile, delete_account_profile,
-    rename_account_profile,
+    list_account_profiles, get_account_profile_details, save_account_profile,
+    delete_account_profile, rename_account_profile,
 )
 from notifier import (
     load_telegram_config, save_telegram_config, test_connection as test_telegram,
@@ -721,70 +721,40 @@ class App(ctk.CTk):
             cr = load_credentials()
             if cr: self.sce.insert(0, cr[0])
 
-        # Named SafetyCulture account profiles
-        c_profiles = self._card("SafetyCulture profiles")
-        profiles = list_account_profiles()
-        if profiles:
-            for name, profile in profiles.items():
-                email = profile.get("email", "")
-                folder_url = profile.get("template_folder_url", "")
-                desc = f"{name} | {email}"
-                if folder_url:
-                    desc += " | folder URL saved"
-                ctk.CTkLabel(
-                    c_profiles,
-                    text=desc,
-                    font=ctk.CTkFont(family=F, size=10),
-                    text_color=DIM,
-                ).pack(anchor="w", padx=12, pady=(0, 3))
-        else:
-            ctk.CTkLabel(
-                c_profiles,
-                text="CSV dùng cột account/account_profile để gọi profile tại đây.",
-                font=ctk.CTkFont(family=F, size=10),
-                text_color=MUTED,
-            ).pack(anchor="w", padx=12, pady=(0, 6))
-
-        profile_row = ctk.CTkFrame(c_profiles, fg_color="transparent")
-        profile_row.pack(fill="x", padx=12, pady=(4, 10))
-        self.sc_profile_name = ctk.CTkEntry(
-            profile_row, placeholder_text="Profile", width=105, height=32,
-            corner_radius=6, border_color=BORDER,
-        )
-        self.sc_profile_name.pack(side="left", padx=(0, 4))
-        self.sc_profile_email = ctk.CTkEntry(
-            profile_row, placeholder_text="Email", width=170, height=32,
-            corner_radius=6, border_color=BORDER,
-        )
-        self.sc_profile_email.pack(side="left", padx=(0, 4))
-        self.sc_profile_password = ctk.CTkEntry(
-            profile_row, placeholder_text="Password", show="*", width=135, height=32,
-            corner_radius=6, border_color=BORDER,
-        )
-        self.sc_profile_password.pack(side="left", padx=(0, 4))
-        self.sc_profile_folder = ctk.CTkEntry(
-            profile_row, placeholder_text="Folder URL", width=210, height=32,
-            corner_radius=6, border_color=BORDER,
-        )
-        self.sc_profile_folder.pack(side="left", padx=(0, 5))
+        # Named SafetyCulture account profiles. Double-click a row to edit it.
+        c_profiles = self._card("SafetyCulture accounts")
+        ctk.CTkLabel(
+            c_profiles,
+            text="Double-click account để xem và chỉnh sửa thông tin.",
+            font=ctk.CTkFont(family=F, size=10), text_color=MUTED,
+        ).pack(anchor="w", padx=12, pady=(0, 6))
+        table_frame = ctk.CTkFrame(c_profiles, fg_color="transparent")
+        table_frame.pack(fill="x", padx=12, pady=(0, 6))
+        columns = ("account", "email", "folder")
+        self.sc_profile_tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=5)
+        self.sc_profile_tree.heading("account", text="Account")
+        self.sc_profile_tree.heading("email", text="Email")
+        self.sc_profile_tree.heading("folder", text="Template folder")
+        self.sc_profile_tree.column("account", width=150, anchor="w")
+        self.sc_profile_tree.column("email", width=230, anchor="w")
+        self.sc_profile_tree.column("folder", width=300, anchor="w")
+        self.sc_profile_tree.pack(fill="x", side="left", expand=True)
+        tree_scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.sc_profile_tree.yview)
+        tree_scroll.pack(side="right", fill="y")
+        self.sc_profile_tree.configure(yscrollcommand=tree_scroll.set)
+        self.sc_profile_tree.bind("<Double-1>", self._edit_sc_profile_from_table)
+        self._fill_sc_profile_table()
+        profile_actions = ctk.CTkFrame(c_profiles, fg_color="transparent")
+        profile_actions.pack(fill="x", padx=12, pady=(0, 10))
         ctk.CTkButton(
-            profile_row, text="Lưu", width=50, height=32, corner_radius=6,
-            fg_color=GREEN, hover_color="#16A34A",
-            font=ctk.CTkFont(family=F, size=10),
-            command=self._save_sc_profile,
-        ).pack(side="left", padx=(0, 3))
+            profile_actions, text="Thêm account", width=100, height=30, corner_radius=6,
+            fg_color=GREEN, hover_color="#16A34A", font=ctk.CTkFont(family=F, size=10),
+            command=self._new_sc_profile,
+        ).pack(side="left", padx=(0, 5))
         ctk.CTkButton(
-            profile_row, text="Xóa", width=50, height=32, corner_radius=6,
-            fg_color=RED, hover_color=RED_H,
-            font=ctk.CTkFont(family=F, size=10),
-            command=self._del_sc_profile,
-        ).pack(side="left", padx=(0, 3))
-        ctk.CTkButton(
-            profile_row, text="Đổi tên", width=70, height=32, corner_radius=6,
-            fg_color="transparent", hover_color=ELEVATED,
-            border_width=1, border_color=BORDER, text_color=DIM,
-            font=ctk.CTkFont(family=F, size=10),
-            command=self._rename_sc_profile,
+            profile_actions, text="Xóa account", width=100, height=30, corner_radius=6,
+            fg_color=RED, hover_color=RED_H, font=ctk.CTkFont(family=F, size=10),
+            command=self._del_sc_profile_from_table,
         ).pack(side="left")
 
         # License
@@ -2285,56 +2255,114 @@ class App(ctk.CTk):
     def _del_sc(self):
         if messagebox.askyesno("","Xóa credentials?"): clear_sc_login(); self._pg_settings()
 
-    def _save_sc_profile(self):
-        name = self.sc_profile_name.get().strip() if hasattr(self, "sc_profile_name") else ""
-        email = self.sc_profile_email.get().strip() if hasattr(self, "sc_profile_email") else ""
-        password = self.sc_profile_password.get().strip() if hasattr(self, "sc_profile_password") else ""
-        folder_url = self.sc_profile_folder.get().strip() if hasattr(self, "sc_profile_folder") else ""
-        if not name or not email or not password:
-            messagebox.showwarning("", "Nhập profile + email + password")
+    def _fill_sc_profile_table(self):
+        tree = getattr(self, "sc_profile_tree", None)
+        if not tree:
             return
-        if folder_url and "safetyculture.com" not in folder_url:
-            messagebox.showwarning("URL", "Folder URL phải là link SafetyCulture hoặc để trống.")
-            return
-        if save_account_profile(name, email, password, template_folder_url=folder_url):
-            messagebox.showinfo("OK", f"Đã lưu profile: {name}")
-            self._pg_settings()
-        else:
-            messagebox.showerror("Error", "Không lưu được profile")
+        for item in tree.get_children():
+            tree.delete(item)
+        for name, profile in list_account_profiles().items():
+            tree.insert("", "end", iid=name, values=(
+                name,
+                profile.get("email", ""),
+                profile.get("template_folder_url", ""),
+            ))
 
-    def _del_sc_profile(self):
-        name = self.sc_profile_name.get().strip() if hasattr(self, "sc_profile_name") else ""
-        if not name:
-            messagebox.showwarning("", "Nhập profile cần xóa")
+    def _edit_sc_profile_from_table(self, _event=None):
+        tree = getattr(self, "sc_profile_tree", None)
+        if not tree:
             return
-        if messagebox.askyesno("", f"Xóa SafetyCulture profile '{name}'?"):
-            if delete_account_profile(name):
-                messagebox.showinfo("OK", f"Đã xóa profile: {name}")
-            else:
-                messagebox.showwarning("", "Không tìm thấy profile")
-            self._pg_settings()
+        selected = tree.selection()
+        if selected:
+            self._open_sc_profile_editor(selected[0])
 
-    def _rename_sc_profile(self):
-        old_name = self.sc_profile_name.get().strip() if hasattr(self, "sc_profile_name") else ""
-        if not old_name:
-            messagebox.showwarning("", "Nhập profile cần đổi tên")
-            return
-        new_name = simpledialog.askstring("Đổi tên profile", "Tên profile mới:", parent=self)
-        if not new_name:
-            return
-        new_name = new_name.strip()
-        if rename_account_profile(old_name, new_name):
+    def _new_sc_profile(self):
+        self._open_sc_profile_editor("")
+
+    def _open_sc_profile_editor(self, old_name):
+        details = get_account_profile_details(old_name) if old_name else {}
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Thông tin account" if old_name else "Thêm account")
+        dialog.geometry("480x330")
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        dialog.grab_set()
+
+        ctk.CTkLabel(
+            dialog, text="Thông tin SafetyCulture account",
+            font=ctk.CTkFont(family=F, size=15, weight="bold"), text_color=TXT,
+        ).pack(anchor="w", padx=22, pady=(18, 14))
+        form = ctk.CTkFrame(dialog, fg_color="transparent")
+        form.pack(fill="x", padx=22)
+
+        entries = {}
+        fields = (
+            ("Tên account / user", "name", old_name, False),
+            ("Email đăng nhập", "email", details.get("email", ""), False),
+            ("Password", "password", details.get("password", ""), True),
+            ("Template folder URL", "folder", details.get("template_folder_url", ""), False),
+        )
+        for label, key, value, masked in fields:
+            ctk.CTkLabel(form, text=label, width=145, anchor="w", text_color=DIM,
+                         font=ctk.CTkFont(family=F, size=10)).pack(anchor="w", pady=(0, 2))
+            entry = ctk.CTkEntry(form, height=32, show="*" if masked else "")
+            entry.pack(fill="x", pady=(0, 8))
+            if value:
+                entry.insert(0, value)
+            entries[key] = entry
+
+        def save_from_dialog():
+            name = entries["name"].get().strip()
+            email = entries["email"].get().strip()
+            password = entries["password"].get()
+            folder_url = entries["folder"].get().strip()
+            if not name or not email or not password:
+                messagebox.showwarning("Thiếu thông tin", "Nhập tên account, email và password.", parent=dialog)
+                return
+            if folder_url and "safetyculture.com" not in folder_url:
+                messagebox.showwarning("URL", "Folder URL phải là link SafetyCulture hoặc để trống.", parent=dialog)
+                return
+
+            renamed = bool(old_name and old_name != name)
+            if renamed and not rename_account_profile(old_name, name):
+                messagebox.showwarning("Không lưu được", "Tên account mới đã tồn tại hoặc tên cũ không còn.", parent=dialog)
+                return
+            if not save_account_profile(name, email, password, template_folder_url=folder_url):
+                messagebox.showerror("Lỗi", "Không lưu được thông tin account.", parent=dialog)
+                return
+
             csv_changed = 0
             fp = self.fv.get().strip() if hasattr(self, "fv") else ""
-            if fp:
-                csv_changed = rename_account_in_csv(fp, old_name, new_name)
+            if renamed and fp:
+                csv_changed = rename_account_in_csv(fp, old_name, name)
                 if csv_changed and os.path.exists(fp):
                     self._load()
-            extra = f"\nĐã cập nhật {csv_changed} ô account trong CSV đang chọn." if fp else ""
-            messagebox.showinfo("OK", f"Đã đổi profile: {old_name} -> {new_name}{extra}")
+            dialog.destroy()
             self._pg_settings()
-        else:
-            messagebox.showwarning("", "Không đổi được. Kiểm tra tên cũ/tên mới có bị trùng không.")
+            extra = f" Đã đổi {csv_changed} ô account trong CSV đang chọn." if renamed and fp else ""
+            messagebox.showinfo("Đã lưu", f"Account '{name}' đã được cập nhật.{extra}", parent=self)
+
+        actions = ctk.CTkFrame(dialog, fg_color="transparent")
+        actions.pack(fill="x", padx=22, pady=(6, 16))
+        ctk.CTkButton(actions, text="Hủy", width=80, height=32, command=dialog.destroy,
+                      fg_color="transparent", border_width=1, border_color=BORDER,
+                      text_color=DIM).pack(side="right", padx=(6, 0))
+        ctk.CTkButton(actions, text="Lưu", width=80, height=32, command=save_from_dialog,
+                      fg_color=GREEN, hover_color="#16A34A").pack(side="right")
+
+    def _del_sc_profile_from_table(self):
+        tree = getattr(self, "sc_profile_tree", None)
+        selected = tree.selection() if tree else ()
+        if not selected:
+            messagebox.showwarning("Account", "Chọn account cần xóa.")
+            return
+        name = selected[0]
+        if messagebox.askyesno("Xác nhận", f"Xóa SafetyCulture account '{name}'?"):
+            if delete_account_profile(name):
+                self._pg_settings()
+                messagebox.showinfo("Đã xóa", f"Đã xóa account: {name}")
+            else:
+                messagebox.showwarning("Account", "Không tìm thấy account.")
 
     def _act_lic(self):
         k = self.lke.get().strip()
