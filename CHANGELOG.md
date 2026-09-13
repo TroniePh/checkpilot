@@ -1,5 +1,13 @@
 # Changelog — CheckPilot™
 
+## v2.6.4 (2026-09-13)
+
+- Retry ACE Daily Food Safety Log when SafetyCulture shows the full-page `Something went wrong` error.
+- Added SafetyCulture profile rename in Settings.
+- Renaming a profile now moves saved session data and updates matching account/profile columns in the selected CSV.
+
+---
+
 ## v2.6.3 (2026-06-09)
 
 - Fixed ACE Daily Food Safety Log Hot Food question matching when SafetyCulture renders the same visible question through nested DOM containers.

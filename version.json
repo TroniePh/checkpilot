@@ -1,6 +1,6 @@
 {
-  "version": "2.6.3",
-  "release_date": "2026-06-09",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.6.3/CheckPilot_Setup_v2.6.3.exe",
-  "changelog": "v2.6.3: Fixes ACE Daily Food Safety Log Hot Food question matching by collapsing nested DOM candidates, while keeping duplicate-question section protection for repeated ACE fields."
+  "version": "2.6.4",
+  "release_date": "2026-09-13",
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.6.4/CheckPilot_Setup_v2.6.4.exe",
+  "changelog": "v2.6.4: Retries ACE Daily Food Safety Log when SafetyCulture shows the Something went wrong page, and allows renaming SafetyCulture profiles while updating the selected CSV account columns."
 }
