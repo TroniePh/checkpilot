@@ -1,6 +1,6 @@
 {
-  "version": "2.6.6",
+  "version": "2.6.7",
   "release_date": "2026-09-13",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.6.6/CheckPilot_Setup_v2.6.6.exe",
-  "changelog": "v2.6.6: Fixes the startup crash in v2.6.5 by rebuilding with the complete runtime dependencies."
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.6.7/CheckPilot_Setup_v2.6.7.exe",
+  "changelog": "v2.6.7: Fixes the account editor save button and shows each account's template count and names from the selected CSV."
 }

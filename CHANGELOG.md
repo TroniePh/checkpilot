@@ -1,5 +1,12 @@
 # Changelog — CheckPilot™
 
+## v2.6.7 (2026-09-13)
+
+- Fixed the account editor window so the Save button is visible and usable.
+- Added template count and template names per SafetyCulture account from the selected CSV.
+
+---
+
 ## v2.6.6 (2026-09-13)
 
 - Rebuilt the installer with the complete pandas, Playwright, and pystray runtime dependencies to fix startup failures after updating to v2.6.5.

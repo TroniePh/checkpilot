@@ -1,5 +1,5 @@
 #define MyAppName "CheckPilot"
-#define MyAppVersion "2.6.6"
+#define MyAppVersion "2.6.7"
 #define MyAppPublisher "CheckPilot"
 #define MyAppExeName "CheckPilot.exe"
 
