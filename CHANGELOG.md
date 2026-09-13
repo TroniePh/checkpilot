@@ -1,5 +1,11 @@
 # Changelog — CheckPilot™
 
+## v2.6.6 (2026-09-13)
+
+- Rebuilt the installer with the complete pandas, Playwright, and pystray runtime dependencies to fix startup failures after updating to v2.6.5.
+
+---
+
 ## v2.6.5 (2026-09-13)
 
 - Added a SafetyCulture account table in Settings with double-click editing.
