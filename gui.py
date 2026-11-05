@@ -2326,7 +2326,7 @@ class App(ctk.CTk):
         entries = {}
         fields = (
             ("Tên account / user", "name", old_name, False),
-            ("Email đăng nhập", "email", details.get("email", ""), False),
+            ("Email / Username đăng nhập", "email", details.get("email", ""), False),
             ("Password", "password", details.get("password", ""), True),
             ("Template folder URL", "folder", details.get("template_folder_url", ""), False),
         )

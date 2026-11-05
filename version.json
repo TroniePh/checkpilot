@@ -1,6 +1,6 @@
 {
-  "version": "2.6.7",
+  "version": "2.6.8",
   "release_date": "2026-09-13",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.6.7/CheckPilot_Setup_v2.6.7.exe",
-  "changelog": "v2.6.7: Fixes the account editor save button and shows each account's template count and names from the selected CSV."
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.6.8/CheckPilot_Setup_v2.6.8.exe",
+  "changelog": "v2.6.8: Adds VONS 02041 as a separate von02041 account at 17:30 while preserving the existing VONS 02090 account at 17:00."
 }

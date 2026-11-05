@@ -1,5 +1,13 @@
 # Changelog — CheckPilot™
 
+## v2.6.8 (2026-11-05)
+
+- Added VONS 02041 as a separate `von02041` account and ACE Daily Food Safety Log schedule at 17:30.
+- Preserved the existing VONS 02090 account and its 17:00 schedule.
+- Clarified the account editor field as Email / Username.
+
+---
+
 ## v2.6.7 (2026-09-13)
 
 - Fixed the account editor window so the Save button is visible and usable.
