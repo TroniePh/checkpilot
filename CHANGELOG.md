@@ -1,5 +1,12 @@
 # Changelog — CheckPilot™
 
+## v2.6.9 (2026-11-07)
+
+- Randomizes `What is the pH of the Rice Slurry?` in `Yummi Sushi - Sushi Rice pH Testing` between `3.93` and `4.00` at runtime.
+- Keeps the CSV value unchanged and leaves all other templates/questions untouched.
+
+---
+
 ## v2.6.8 (2026-11-05)
 
 - Added VONS 02041 as a separate `von02041` account and ACE Daily Food Safety Log schedule at 17:30.
