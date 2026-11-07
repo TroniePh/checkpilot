@@ -1,6 +1,6 @@
 {
   "version": "2.6.9",
-  "release_date": "2026-11-05",
+  "release_date": "2026-11-07",
   "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.6.9/CheckPilot_Setup_v2.6.9.exe",
   "changelog": "v2.6.9: Randomizes the Yummi Sushi Rice Slurry pH answer between 3.93 and 4.00 with two decimals at runtime."
 }
