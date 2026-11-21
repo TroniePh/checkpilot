@@ -124,7 +124,8 @@ def send_photo(photo_path: str, caption: str = "") -> bool:
 
 def send_error_alert(error_msg: str, screenshot_path: Optional[str] = None,
                      template: str = "", site: str = "", question: str = "",
-                     url: str = "", details=None):
+                     url: str = "", details=None, account: str = "",
+                     scheduled_time: str = ""):
     """Send formatted error alert with optional screenshot."""
     safe_error = html.escape(str(error_msg))
     text = (
@@ -133,8 +134,12 @@ def send_error_alert(error_msg: str, screenshot_path: Optional[str] = None,
     )
     if template:
         text += f"<b>Template:</b> {html.escape(template)}\n"
+    if account:
+        text += f"<b>Account:</b> {html.escape(account)}\n"
     if site:
         text += f"<b>Site:</b> {html.escape(site)}\n"
+    if scheduled_time:
+        text += f"<b>Schedule:</b> {html.escape(scheduled_time)}\n"
     if question:
         text += f"<b>Câu hỏi:</b> {html.escape(str(question)[:180])}\n"
     if url:
@@ -155,12 +160,13 @@ def send_error_alert(error_msg: str, screenshot_path: Optional[str] = None,
 def send_success_report(template: str, site: str, items: int, errors: int,
                         screenshot_path: Optional[str] = None,
                         verified: bool = False, scheduled_time: str = "",
-                        url: str = ""):
+                        url: str = "", account: str = ""):
     """Send success notification with optional verified screenshot."""
     text = (
         "<b>CheckPilot - Inspection Done</b>\n\n"
         f"<b>Template:</b> {html.escape(template)}\n"
-        f"<b>Site:</b> {html.escape(site)}\n"
+        + (f"<b>Account:</b> {html.escape(account)}\n" if account else "")
+        + f"<b>Site:</b> {html.escape(site)}\n"
         f"<b>Items:</b> {items}\n"
         f"<b>Errors:</b> {errors}\n"
         f"<b>Verified:</b> {'Yes' if verified else 'Not checked'}\n"
@@ -174,11 +180,31 @@ def send_success_report(template: str, site: str, items: int, errors: int,
     if screenshot_path and os.path.exists(screenshot_path):
         caption = (
             f"Saved OK: {template}\n"
-            f"Site: {site}\n"
+            + (f"Account: {account}\n" if account else "")
+            + f"Site: {site}\n"
             f"Verified: {'Yes' if verified else 'Not checked'}\n"
             f"Time: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
         )
         send_photo(screenshot_path, caption)
+
+
+def send_inspection_status(status: str, template: str, site: str,
+                           account: str = "", scheduled_time: str = "",
+                           details: str = ""):
+    """Send one compact status message for one account/template run."""
+    text = (
+        "<b>CheckPilot - Culture Status</b>\n\n"
+        f"<b>Status:</b> {html.escape(status)}\n"
+        f"<b>Template:</b> {html.escape(template)}\n"
+        f"<b>Account:</b> {html.escape(account or 'default')}\n"
+        f"<b>Site:</b> {html.escape(site)}\n"
+    )
+    if scheduled_time:
+        text += f"<b>Schedule:</b> {html.escape(scheduled_time)}\n"
+    if details:
+        text += f"<b>Details:</b> {html.escape(str(details)[:500])}\n"
+    text += f"<b>Time:</b> {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
+    send_message(text)
 
 
 def test_connection() -> tuple:

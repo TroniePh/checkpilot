@@ -1,5 +1,12 @@
 # Changelog — CheckPilot™
 
+## v2.7.0 (2026-11-21)
+
+- Added per-account/template Telegram status messages for RUNNING, SUCCESS, and BLOCKED runs.
+- Included account and schedule details in success/error alerts and schedule logs.
+
+---
+
 ## v2.6.9 (2026-11-07)
 
 - Randomizes `What is the pH of the Rice Slurry?` in `Yummi Sushi - Sushi Rice pH Testing` between `3.93` and `4.00` at runtime.

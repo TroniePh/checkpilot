@@ -35,7 +35,7 @@ from session_manager import (
 )
 from notifier import (
     load_telegram_config, save_telegram_config, test_connection as test_telegram,
-    send_daily_summary, send_error_alert, send_success_report,
+    send_daily_summary, send_error_alert, send_inspection_status, send_success_report,
 )
 from runlock import (
     is_already_run_today, mark_completed, get_remaining, reset_today,
@@ -1939,6 +1939,11 @@ class App(ctk.CTk):
                     + (f" | account={account}" if account else "")
                 )
                 if auto_submit:
+                    send_inspection_status(
+                        "RUNNING", insp.template_name, insp.site_location,
+                        account=account, scheduled_time=self._active_schedule_time,
+                    )
+                if auto_submit:
                     update_run_state(
                         status="running",
                         current_index=idx + 1,
@@ -1973,6 +1978,7 @@ class App(ctk.CTk):
                             verified=verified,
                             scheduled_time=self._active_schedule_time if self._scheduled_run else "",
                             url=self.engine.page.url if self.engine and self.engine.page else "",
+                            account=account,
                         )
                         mark_completed(
                             insp.template_name,
@@ -1994,6 +2000,12 @@ class App(ctk.CTk):
                     run_failed += 1
                     if auto_submit:
                         consecutive_failures += 1
+                        send_inspection_status(
+                            "BLOCKED", insp.template_name, insp.site_location,
+                            account=account,
+                            scheduled_time=self._active_schedule_time,
+                            details="; ".join(errs[:3]),
+                        )
 
                 add_record(insp.template_name, insp.site_location, insp.inspection_date,
                            len(insp.items), ok, errs, self._data_file)
@@ -2045,6 +2057,8 @@ class App(ctk.CTk):
                         question=getattr(self.engine, "current_question", ""),
                         url=self.engine.page.url if self.engine and self.engine.page else "",
                         details=self._run_errors[-8:],
+                        account=account,
+                        scheduled_time=self._active_schedule_time,
                     )
                     update_run_state(status="blocked")
                     break

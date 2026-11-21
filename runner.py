@@ -29,7 +29,7 @@ from data_loader import (
     validate_detailed,
 )
 from history import add_record
-from notifier import send_daily_summary, send_error_alert, send_success_report
+from notifier import send_daily_summary, send_error_alert, send_inspection_status, send_success_report
 from reporter import generate_report
 from runlock import get_remaining, mark_completed
 from run_state import (
@@ -255,7 +255,10 @@ def execute_auto_run(scheduled_time: str = "") -> bool:
             return True
         _log(
             f"Lịch {scheduled_time}: chạy {len(source_list)} template - " +
-            ", ".join(i.template_name for i in source_list)
+            ", ".join(
+                f"{_account_label(_inspection_account(i))}/{i.template_name}"
+                for i in source_list
+            )
         )
 
     source_total = len(source_list)
@@ -335,6 +338,10 @@ def execute_auto_run(scheduled_time: str = "") -> bool:
                 f"[{idx}/{total}] AUTO: {insp.template_name} | {insp.site_location}"
                 + (f" | account={account}" if account else "")
             )
+            send_inspection_status(
+                "RUNNING", insp.template_name, insp.site_location,
+                account=account, scheduled_time=scheduled_time,
+            )
             update_run_state(
                 status="running",
                 current_index=idx,
@@ -362,6 +369,7 @@ def execute_auto_run(scheduled_time: str = "") -> bool:
                     verified=verified,
                     scheduled_time=scheduled_time,
                     url=engine.page.url if engine.page else "",
+                    account=account,
                 )
                 mark_completed(insp.template_name, insp.site_location, _inspection_account(insp))
                 success += 1
@@ -370,6 +378,11 @@ def execute_auto_run(scheduled_time: str = "") -> bool:
                 recent_errors.extend(errors)
                 failed += 1
                 consecutive_failures += 1
+                send_inspection_status(
+                    "BLOCKED", insp.template_name, insp.site_location,
+                    account=account, scheduled_time=scheduled_time,
+                    details="; ".join(errors[:3]),
+                )
 
             add_record(
                 insp.template_name,
@@ -423,6 +436,8 @@ def execute_auto_run(scheduled_time: str = "") -> bool:
                     question=getattr(engine, "current_question", ""),
                     url=engine.page.url if engine.page else "",
                     details=recent_errors[-8:],
+                    account=account,
+                    scheduled_time=scheduled_time,
                 )
                 update_run_state(status="blocked")
                 break
