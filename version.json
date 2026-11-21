@@ -1,6 +1,6 @@
 {
-  "version": "2.7.0",
+  "version": "2.7.2",
   "release_date": "2026-11-21",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.7.0/CheckPilot_Setup_v2.7.0.exe",
-  "changelog": "v2.7.0: Reports RUNNING, SUCCESS, and BLOCKED status in Telegram per SafetyCulture account and template, including the scheduled slot."
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.7.2/CheckPilot_Setup_v2.7.2.exe",
+  "changelog": "Opens scheduled ACE inspections for VONS 02041 and 02090 from Templates. Test mode now reports failed answers correctly."
 }

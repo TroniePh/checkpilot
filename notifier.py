@@ -95,7 +95,7 @@ def send_message(text: str) -> bool:
             else:
                 logger.warning("Telegram send failed for chat %s: HTTP %s", recipient["chat_id"], resp.status_code)
         except Exception as e:
-            logger.warning("Telegram send failed for chat %s: %s", recipient.get("chat_id"), e)
+            logger.warning("Telegram send failed for chat %s: %s", recipient.get("chat_id"), type(e).__name__)
     return ok_count > 0
 
 
@@ -118,7 +118,7 @@ def send_photo(photo_path: str, caption: str = "") -> bool:
             else:
                 logger.warning("Telegram photo failed for chat %s: HTTP %s", recipient["chat_id"], resp.status_code)
         except Exception as e:
-            logger.warning("Telegram photo failed for chat %s: %s", recipient.get("chat_id"), e)
+            logger.warning("Telegram photo failed for chat %s: %s", recipient.get("chat_id"), type(e).__name__)
     return ok_count > 0
 
 
@@ -228,7 +228,7 @@ def test_connection() -> tuple:
             else:
                 failures.append(f"{recipient['chat_id']}: không gửi được tin nhắn")
         except Exception as e:
-            failures.append(f"{recipient.get('chat_id', '?')}: {e}")
+            failures.append(f"{recipient.get('chat_id', '?')}: {type(e).__name__}")
 
     if ok_count == len(recipients):
         return True, f"OK - đã gửi test tới {ok_count} chat"

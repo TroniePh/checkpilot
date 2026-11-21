@@ -1,5 +1,13 @@
 # Changelog — CheckPilot™
 
+## v2.7.2 (2026-11-21)
+
+- Opens the assigned ACE inspection from Templates for VONS 02041 and VONS 02090 instead of treating the schedule chooser as the form.
+- Blocks filling when the inspection editor is no longer open and correctly reports failed Test-mode answers.
+- Logs the scheduled CSV and profiles, omits Telegram token URLs from network errors, and removes randomized rice pH answers.
+
+---
+
 ## v2.7.0 (2026-11-21)
 
 - Added per-account/template Telegram status messages for RUNNING, SUCCESS, and BLOCKED runs.

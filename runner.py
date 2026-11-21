@@ -254,9 +254,9 @@ def execute_auto_run(scheduled_time: str = "") -> bool:
             _log(f"Không có template nào đặt giờ {scheduled_time}; bỏ qua slot này.")
             return True
         _log(
-            f"Lịch {scheduled_time}: chạy {len(source_list)} template - " +
+            f"Lịch {scheduled_time} | CSV: {data_file} | {len(source_list)} template: " +
             ", ".join(
-                f"{_account_label(_inspection_account(i))}/{i.template_name}"
+                f"{_account_label(_inspection_account(i))}/{i.template_name} ({i.site_location})"
                 for i in source_list
             )
         )

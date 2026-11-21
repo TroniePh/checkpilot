@@ -3,6 +3,7 @@ CheckPilot - Inspection Automation Assistant
 Designed by Pham Duy | 0868609901
 Full-featured SaaS UI with dashboard, validation, history, test run
 """
+import logging
 import os
 import sys
 import threading
@@ -68,6 +69,8 @@ from autostart import (
     register_prelogin_task, is_prelogin_task_registered,
     build_validation_state, save_validation_state, is_validation_current,
 )
+
+logger = logging.getLogger(__name__)
 
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
@@ -1399,8 +1402,13 @@ class App(ctk.CTk):
             return False
         self._schedule_full_inspections = list(source)
         self.inspections = matched
-        names = ", ".join(i.template_name for i in matched)
-        self._log(f"Lịch {scheduled_time}: chạy {len(matched)} template - {names}")
+        names = ", ".join(
+            f"{_account_label(_inspection_account(i))}/{i.template_name} ({i.site_location})"
+            for i in matched
+        )
+        msg = f"Lịch {scheduled_time} | CSV: {self._data_file} | {len(matched)} template: {names}"
+        logger.info(msg)
+        self._log(msg)
         self._render_inspection_list()
         return True
 
@@ -1884,6 +1892,7 @@ class App(ctk.CTk):
                         + ", ".join(missing_accounts)
                     )
                     self._log(msg)
+                    logger.warning(msg)
                     send_error_alert(msg)
                     skipped_count += before_login_filter - len(run_list)
                     total = len(run_list)

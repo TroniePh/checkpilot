@@ -3,12 +3,12 @@ CheckPilot - Automation Engine
 Features: Auto/Test mode, health check, error tracking, Telegram alerts, HTML dump
 """
 import os
-import random
 import re
 import time
 import logging
 from datetime import datetime
 from typing import Callable, Optional, List
+from urllib.parse import urlsplit
 
 from playwright.sync_api import (
     sync_playwright, Page, Browser, BrowserContext,
@@ -330,13 +330,24 @@ class AutomationEngine:
             return False
 
     # ── Main Run ──
+    def _uses_assigned_schedule(self, data: InspectionData) -> bool:
+        return data.template_name == "ACE Daily Food Safety Log" and (
+            self.account_name.casefold(), data.site_location.casefold()
+        ) in {
+            ("von02041", "vons 02041 (main)"),
+            ("ace_vons_02090", "vons 02090 (main)"),
+            ("von02090", "vons 02090 (main)"),
+        }
+
     def run_inspection(self, data: InspectionData, auto_submit: bool = True) -> bool:
         """
         Run full inspection. SafetyCulture sometimes shows a transient
         "An error has occurred" dialog after an answer click; when that happens
         abandon the draft and rerun the same template from the beginning.
         """
-        for attempt in range(1, RUN_RETRY_MAX + 1):
+        # An uncertain start must not start the same scheduled assignment again.
+        max_attempts = 1 if self._uses_assigned_schedule(data) else RUN_RETRY_MAX
+        for attempt in range(1, max_attempts + 1):
             self.item_errors = []
             self.current_template = data.template_name
             self.current_site = data.site_location
@@ -349,15 +360,13 @@ class AutomationEngine:
                 if attempt > 1:
                     self._log(
                         f"Retrying same template from beginning "
-                        f"({attempt}/{RUN_RETRY_MAX}): {data.template_name}"
+                        f"({attempt}/{max_attempts}): {data.template_name}"
                     )
                 return self._run_inspection_once(data, auto_submit)
             except SafetyCultureTransientError as e:
-                self._log(
-                    f"SafetyCulture error popup detected - retrying template "
-                    f"({attempt}/{RUN_RETRY_MAX})"
-                )
-                if attempt >= RUN_RETRY_MAX:
+                self._log(f"SafetyCulture error popup detected ({attempt}/{max_attempts})")
+                if attempt >= max_attempts:
+                    self.item_errors.append(str(e))
                     stamp = datetime.now().strftime("%H%M%S")
                     ss = self._screenshot_error(f"fatal_{stamp}")
                     self._save_html_dump(f"fatal_{stamp}")
@@ -396,13 +405,14 @@ class AutomationEngine:
             self._check_state()
             self._dismiss_popups()
 
-            # Navigate with retry
             self._with_retry("go_to_inspections", self._go_to_inspections)
             self._check_state()
-
-            # Start inspection with retry
-            self._with_retry("start_inspection", lambda: self._start_new_inspection(data.template_name))
+            if self._uses_assigned_schedule(data):
+                self._start_new_inspection(data.template_name, use_assigned_schedule=True)
+            else:
+                self._with_retry("start_inspection", lambda: self._start_new_inspection(data.template_name))
             self._check_state()
+            self._require_inspection_page()
 
             self._fill_header(data)
             self._check_state()
@@ -410,15 +420,19 @@ class AutomationEngine:
             self._fill_all_items(data.items)
             self._check_state()
             self._dismiss_popups()
+            self._require_inspection_page()
 
             if not auto_submit:
                 self._scroll_to_bottom()
-                self._log("Đã nhập xong. Vui lòng kiểm tra rồi submit thủ công.")
+                if self.item_errors:
+                    self._log(f"Test mode: {len(self.item_errors)} error(s). Check the draft; do not submit.")
+                else:
+                    self._log("Đã nhập xong. Vui lòng kiểm tra rồi submit thủ công.")
                 self._log("  Test mode: không bấm Complete/Submit. Bấm Stop sau khi kiểm tra xong.")
                 # Keep browser open; wait for user to stop.
                 while not self._stopped:
                     time.sleep(1)
-                return True
+                return not self.item_errors
 
             # Auto submit: check errors first
             if self.item_errors:
@@ -446,6 +460,16 @@ class AutomationEngine:
             raise
         except StopRequested:
             self._log("Stopped by user")
+            return False
+        except InspectionPageLost as e:
+            self.item_errors.append(str(e))
+            self._log(f"BLOCKED: {e}")
+            ss = self._screenshot_error("inspection_page_lost")
+            self._save_html_dump("inspection_page_lost")
+            send_error_alert(
+                str(e), ss, data.template_name, data.site_location,
+                url=self.page.url, account=self.account_name or "default",
+            )
             return False
         except Exception as e:
             ss = self._screenshot_error(f"fatal_{datetime.now().strftime('%H%M%S')}")
@@ -567,7 +591,29 @@ class AutomationEngine:
 
         self._log(f"  URL: {self.page.url}")
 
-    def _start_new_inspection(self, template_name: str):
+    def _start_assigned_inspection(self, template_name: str):
+        """Select the assigned inspection from the Templates start screen."""
+        self._log(f"Opening the scheduled inspection: {template_name}")
+        title = re.compile(
+            rf"^\s*{re.escape(template_name)}\s*[-\u2013\u2014]\s*Complete Daily\s*$", re.I
+        )
+        matches = self.page.get_by_text(title).filter(visible=True)
+        start = self.page.get_by_role("button", name="Start inspection", exact=True).filter(visible=True)
+        try:
+            matches.first.wait_for(state="visible", timeout=10000)
+            if matches.count() != 1:
+                raise InspectionPageLost("More than one matching ACE assignment; nothing started.")
+            matches.click(timeout=5000)
+            start.click(timeout=10000)
+            self.page.wait_for_url("**/inspection/audit_*", timeout=NAVIGATION_TIMEOUT,
+                                   wait_until="domcontentloaded")
+        except PWTimeout as e:
+            raise InspectionPageLost(
+                f"Could not open the assigned ACE inspection for {self.current_site}. "
+                "Check the assignment for an existing draft before retrying. Nothing was submitted."
+            ) from e
+
+    def _start_new_inspection(self, template_name: str, use_assigned_schedule: bool = False):
         """
         On Templates page (inside folder): find template -> click Start inspection
         """
@@ -632,6 +678,9 @@ class AutomationEngine:
                 raise RuntimeError(f"Cannot find Start/New inspection button for '{template_name}'. url='{self.page.url}', screenshot='{ss}'")
             self._log("  Clicked Start inspection (after template click)")
 
+        self._wait_for_inspection_form(template_name, use_assigned_schedule)
+
+    def _wait_for_inspection_form(self, template_name: str, use_assigned_schedule: bool = False):
         # Wait for inspection form to load
         time.sleep(PAGE_LOAD_WAIT + 3)
         try:
@@ -639,7 +688,13 @@ class AutomationEngine:
         except:
             pass
 
+        if use_assigned_schedule and self._showing_schedule_choice():
+            self._start_assigned_inspection(template_name)
+            self._wait_for_inspection_form(template_name)
+            return
+
         self._log(f"  Form URL: {self.page.url}")
+        self._require_inspection_page()
         if not self._is_inspection_form_open(template_name):
             self._log(f"  ERROR: Inspection form did not open for '{template_name}'")
             self._log(f"  URL: {self.page.url}")
@@ -651,12 +706,31 @@ class AutomationEngine:
             )
         self._log("Form opened")
 
+    def _on_inspection_page(self) -> bool:
+        path = urlsplit(self.page.url).path if self.page else ""
+        return bool(re.fullmatch(r"/inspection/(?:new|audit_[^/]+)/?", path))
+
+    def _require_inspection_page(self):
+        if self._showing_schedule_choice():
+            raise InspectionPageLost(
+                "SafetyCulture is showing a scheduled inspection choice, not the editor. Nothing was submitted."
+            )
+        if self._on_inspection_page():
+            return
+        path = urlsplit(self.page.url).path if self.page else ""
+        raise InspectionPageLost(
+            f"SafetyCulture left the inspection editor ({path or '/'}). Nothing was submitted."
+        )
+
+    def _showing_schedule_choice(self) -> bool:
+        path = urlsplit(self.page.url).path if self.page else ""
+        return (path.rstrip("/") == "/inspection/new" or path.startswith("/templates")) and self.page.get_by_text(
+            re.compile(r"you have \d+ scheduled inspections? due for this template", re.I)
+        ).first.is_visible()
+
     def _is_inspection_form_open(self, template_name: str) -> bool:
         """Best-effort guard to prevent filling on the template list or wrong page."""
-        if not self.page:
-            return False
-        url = self.page.url.lower()
-        if "auth." in url or "/login" in url or "/logout" in url:
+        if not self._on_inspection_page():
             return False
         form_indicators = [
             'button:has-text("Complete inspection")',
@@ -665,7 +739,7 @@ class AutomationEngine:
             'button:has-text("Add note")',
             'text="Conducted on"',
             'text="Site conducted"',
-            '[data-testid*="inspection"]',
+            'text="Select Your Store"',
         ]
         for selector in form_indicators:
             try:
@@ -834,6 +908,7 @@ class AutomationEngine:
         self._log(f"Header: {data.site_location} | {data.inspection_date}")
         if data.inspection_date:
             self._fill_date(data.inspection_date)
+            self._require_inspection_page()
         if data.site_location:
             self._fill_site(data.site_location)
         time.sleep(STEP_DELAY)
@@ -865,7 +940,9 @@ class AutomationEngine:
 
         for idx, item in enumerate(items):
             self._check_state()
+            self._require_inspection_page()
             self._dismiss_popups()
+            self._require_inspection_page()
             self.current_question = item.question
 
             # Special command: navigate to next page
@@ -885,12 +962,6 @@ class AutomationEngine:
                 self._scroll_to_section(current_section)
                 time.sleep(SCROLL_DELAY)
             self.current_section = current_section or item.section
-
-            if (
-                self._compact_text(self.current_template) == "yummisushisushiricephtesting"
-                and self._compact_text(item.question) == "whatisthephofthericeslurry"
-            ):
-                item.answer = f"{random.randint(393, 400) / 100:.2f}"
 
             self._log(f"  [{idx+1}/{total}] {item.question[:40]}... -> {item.answer}")
 
@@ -913,6 +984,7 @@ class AutomationEngine:
                 self.item_errors.append(f"Error: {item.question[:40]}: {str(e)[:30]}")
                 item_ok = False
 
+            self._require_inspection_page()
             if item.notes:
                 try:
                     self._add_note(item)
@@ -3859,6 +3931,10 @@ class AutomationEngine:
 
 
 class StopRequested(Exception):
+    pass
+
+
+class InspectionPageLost(RuntimeError):
     pass
 
 
