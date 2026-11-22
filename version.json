@@ -1,6 +1,6 @@
 {
-  "version": "2.7.2",
-  "release_date": "2026-11-21",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.7.2/CheckPilot_Setup_v2.7.2.exe",
-  "changelog": "Opens scheduled ACE inspections for VONS 02041 and 02090 from Templates. Test mode now reports failed answers correctly."
+  "version": "2.7.3",
+  "release_date": "2026-11-22",
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.7.3/CheckPilot_Setup_v2.7.3.exe",
+  "changelog": "Resumes assigned VON ACE drafts, verifies the operation picker, and supports optional private Telegram error reports."
 }
