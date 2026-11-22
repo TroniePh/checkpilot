@@ -49,6 +49,8 @@ def _normalize_config(config: dict) -> dict:
         "chat_id": first.get("chat_id", ""),
         "chat_ids": [r["chat_id"] for r in recipients],
         "recipients": recipients,
+        "feedback_chat_id": str(config.get("feedback_chat_id") or "").strip(),
+        "auto_support_errors": config.get("auto_support_errors") is True,
     }
 
 
@@ -97,6 +99,28 @@ def send_message(text: str) -> bool:
         except Exception as e:
             logger.warning("Telegram send failed for chat %s: %s", recipient.get("chat_id"), type(e).__name__)
     return ok_count > 0
+
+
+def send_feedback(text: str, chat_id: str) -> bool:
+    """Send a user-approved report only to the dedicated support chat."""
+    cfg = load_telegram_config()
+    token = cfg["bot_token"]
+    if not token or chat_id != cfg["feedback_chat_id"] or not re.fullmatch(r"[1-9][0-9]{0,19}", chat_id):
+        return False
+    try:
+        response = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text[:3600]},
+            timeout=10,
+        )
+        if response.status_code != 200:
+            logger.warning("Telegram feedback failed: HTTP %s", response.status_code)
+            return False
+        result = response.json()
+        return isinstance(result, dict) and result.get("ok") is True
+    except (requests.RequestException, ValueError) as exc:
+        logger.warning("Telegram feedback failed: %s", type(exc).__name__)
+        return False
 
 
 def send_photo(photo_path: str, caption: str = "") -> bool:
@@ -153,6 +177,23 @@ def send_error_alert(error_msg: str, screenshot_path: Optional[str] = None,
     text += f"<b>Thời gian:</b> {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
 
     send_message(text)
+    cfg = load_telegram_config()
+    if cfg["auto_support_errors"] and cfg["feedback_chat_id"]:
+        # Never forward raw exceptions, form answers, URLs or screenshots to support.
+        phase = next((label for marker, label in (
+            ("find assigned card", "Không thấy dòng lịch ACE"),
+            ("open assigned card", "Không mở được dòng lịch ACE"),
+            ("find Start or Continue on assignment", "Không tìm thấy nút Start hoặc Continue trong lịch ACE"),
+            ("ACE resume:", "Không khớp thông tin bản nháp ACE; chưa submit"),
+            ("wait for inspection editor", "Không vào được form sau khi chọn lịch"),
+            ("Submission not confirmed", "Chưa xác nhận hoàn tất; đối chiếu inspection trước khi chạy lại"),
+            ("NOT submitting", "Lỗi khi điền form; chưa submit"),
+        ) if marker in str(error_msg)), "Cần xem Diagnostics trên máy khách")
+        if not send_feedback(
+            f"CheckPilot | Lỗi | {datetime.now().astimezone().isoformat(timespec='seconds')}\n"
+            f"{template or '-'} | {site or '-'}\n{phase}", cfg["feedback_chat_id"],
+        ):
+            logger.warning("Telegram support alert not delivered")
     if screenshot_path and os.path.exists(screenshot_path):
         send_photo(screenshot_path, f"Screenshot loi: {template or ''} {str(error_msg)[:160]}".strip())
 

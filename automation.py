@@ -8,7 +8,7 @@ import time
 import logging
 from datetime import datetime
 from typing import Callable, Optional, List
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from playwright.sync_api import (
     sync_playwright, Page, Browser, BrowserContext,
@@ -71,6 +71,9 @@ class AutomationEngine:
         self._browser_headless = BROWSER_HEADLESS
         self._paused = False
         self._stopped = False
+        self._resume_path = ""
+        self._assigned_ace = False
+        self._resume_current_data = False
         self.item_errors: List[str] = []
         self.current_template = ""
         self.current_site = ""
@@ -348,6 +351,9 @@ class AutomationEngine:
         # An uncertain start must not start the same scheduled assignment again.
         max_attempts = 1 if self._uses_assigned_schedule(data) else RUN_RETRY_MAX
         for attempt in range(1, max_attempts + 1):
+            self._verified_audit = None
+            self._resume_path = ""
+            self._resume_current_data = False
             self.item_errors = []
             self.current_template = data.template_name
             self.current_site = data.site_location
@@ -407,14 +413,18 @@ class AutomationEngine:
 
             self._with_retry("go_to_inspections", self._go_to_inspections)
             self._check_state()
-            if self._uses_assigned_schedule(data):
+            self._assigned_ace = self._uses_assigned_schedule(data)
+            if self._assigned_ace:
                 self._start_new_inspection(data.template_name, use_assigned_schedule=True)
             else:
                 self._with_retry("start_inspection", lambda: self._start_new_inspection(data.template_name))
             self._check_state()
             self._require_inspection_page()
 
-            self._fill_header(data)
+            if self._resume_path:
+                self._prepare_ace_resume(data)
+            else:
+                self._fill_header(data)
             self._check_state()
 
             self._fill_all_items(data.items)
@@ -448,7 +458,8 @@ class AutomationEngine:
                     url=self.page.url if self.page else "",
                     details=self.item_errors[:8],
                 )
-                self._abandon_current_inspection("blocked_submit")
+                if not self._resume_path:
+                    self._abandon_current_inspection("blocked_submit")
                 return False
 
             # Safe to submit
@@ -482,13 +493,17 @@ class AutomationEngine:
                 details=self.item_errors[:8],
             )
             logger.exception("Inspection failed")
-            self._abandon_current_inspection("fatal")
+            if not self._resume_path:
+                self._abandon_current_inspection("fatal")
             return False
         finally:
             self.template_folder_url = prev_folder_url
             self.template_folder_name = prev_folder_name
 
     def verify_inspection_saved(self, template_name: str, data: Optional[InspectionData] = None) -> bool:
+        if self._assigned_ace:
+            receipt = getattr(self, "_verified_audit", None)
+            return bool(receipt and receipt[:2] == (template_name, data.site_location if data else self.current_site))
         self._log("Verifying saved...")
         prev_folder_url = self.template_folder_url
         prev_folder_name = self.template_folder_name
@@ -598,18 +613,36 @@ class AutomationEngine:
             rf"^\s*{re.escape(template_name)}\s*[-\u2013\u2014]\s*Complete Daily\s*$", re.I
         )
         matches = self.page.get_by_text(title).filter(visible=True)
-        start = self.page.get_by_role("button", name="Start inspection", exact=True).filter(visible=True)
+        stage = "find assigned card"
         try:
             matches.first.wait_for(state="visible", timeout=10000)
             if matches.count() != 1:
                 raise InspectionPageLost("More than one matching ACE assignment; nothing started.")
+            stage = "open assigned card"
             matches.click(timeout=5000)
-            start.click(timeout=10000)
+            stage = "find Start or Continue on assignment"
+            panel = self.page.locator(
+                'aside, [role="dialog"], [aria-modal="true"], [role="complementary"], '
+                '[data-testid*="drawer" i]'
+            ).filter(has=self.page.get_by_text(title)).filter(visible=True)
+            actions = panel.get_by_role("button", name=re.compile(r"^(Start|Continue) inspection$", re.I))
+            actions = actions.filter(visible=True)
+            actions.first.wait_for(state="visible", timeout=10000)
+            if actions.count() != 1:
+                raise InspectionPageLost("Ambiguous ACE assignment actions; nothing started.")
+            resume = panel.get_by_role("button", name="Continue inspection", exact=True).filter(visible=True)
+            existing = resume.count() == 1
+            button = resume if existing else panel.get_by_role("button", name="Start inspection", exact=True)
+            button.click(timeout=5000)
+            stage = "wait for inspection editor"
             self.page.wait_for_url("**/inspection/audit_*", timeout=NAVIGATION_TIMEOUT,
                                    wait_until="domcontentloaded")
+            if existing:
+                self._resume_path = urlsplit(self.page.url).path
+                self._log("ACE: resuming assigned inspection; preserving existing answers.")
         except PWTimeout as e:
             raise InspectionPageLost(
-                f"Could not open the assigned ACE inspection for {self.current_site}. "
+                f"Could not open the assigned ACE inspection for {self.current_site} ({stage}). "
                 "Check the assignment for an existing draft before retrying. Nothing was submitted."
             ) from e
 
@@ -711,6 +744,8 @@ class AutomationEngine:
         return bool(re.fullmatch(r"/inspection/(?:new|audit_[^/]+)/?", path))
 
     def _require_inspection_page(self):
+        if self._resume_path and urlsplit(self.page.url).path != self._resume_path:
+            raise InspectionPageLost("ACE draft changed during resume. Nothing submitted.")
         if self._showing_schedule_choice():
             raise InspectionPageLost(
                 "SafetyCulture is showing a scheduled inspection choice, not the editor. Nothing was submitted."
@@ -904,6 +939,170 @@ class AutomationEngine:
             return ""
 
     # ── Fill Header ──
+    def _prepare_ace_resume(self, data: InspectionData):
+        # Continue can land on the last edited page. Replay navigation on the same audit.
+        url = urlsplit(self.page.url)
+        params = parse_qsl(url.query, keep_blank_values=True)
+        if any(k == "page" and v.isdigit() and int(v) > 1 for k, v in params):
+            query = urlencode([(k, "1" if k == "page" else v) for k, v in params])
+            self.page.goto(urlunsplit(url._replace(query=query)), wait_until="domcontentloaded")
+        self._require_inspection_page()
+        date_card = self._find_question_container("Conducted on")
+        store = self._find_question_container("Select Your Store")
+        if not store or not date_card:
+            raise InspectionPageLost("ACE resume: could not identify store/date on the title page.")
+        date_text = date_card.evaluate("(e) => [e.innerText,...Array.from(e.querySelectorAll('input'), i=>i.value)].join(' ')")
+        def dates(text):
+            found = set()
+            for raw in re.findall(r"\b(?:\d{4}-\d\d-\d\d|\d{1,2}/\d{1,2}/\d{4}|\d{1,2} [A-Za-z]{3,9} \d{4}|[A-Za-z]{3,9} \d{1,2}, \d{4})(?!\d)", text):
+                for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d %b %Y", "%d %B %Y", "%b %d, %Y", "%B %d, %Y"):
+                    try:
+                        found.add(datetime.strptime(raw, fmt).date())
+                        break
+                    except ValueError:
+                        pass
+            return found
+        draft_dates = dates(date_text)
+        if len(draft_dates) != 1 or draft_dates != dates(data.inspection_date):
+            raise InspectionPageLost("ACE resume: draft date does not match this run; draft preserved.")
+        self._resume_current_data = draft_dates == dates(data.source_date)
+        store_labels = store.evaluate("""e => {
+            const picker = e.querySelector('select,input:not([type=hidden]),[role=combobox],[aria-haspopup=listbox]');
+            if (picker?.tagName === 'SELECT') return picker.selectedOptions[0]?.text || '';
+            if (picker) return picker.value || picker.innerText || '';
+            return e.innerText;
+        }""")
+        ids = set(re.findall(r"\bVONS?\s+(\d{5})\b", store_labels, re.I))
+        expected = re.search(r"\d{5}", data.site_location).group()
+        if not ids and re.fullmatch(r"(?:select(?: your)? store|select(?: an? option)?|choose a store)?[. …]*", store_labels.strip(), re.I):
+            picker = store.get_by_role("combobox").filter(visible=True)
+            if picker.count() == 1:
+                if picker.evaluate("e => e.tagName") == "SELECT":
+                    picker.select_option(label=data.site_location, timeout=3000)
+                    selected = picker.locator("option:checked").inner_text()
+                else:
+                    picker.click()
+                    opt = self.page.get_by_role("option", name=data.site_location, exact=True).filter(visible=True)
+                    opt.click(timeout=3000)
+                    selected = picker.evaluate("e => e.value || e.innerText")
+                ids = set(re.findall(r"\bVONS?\s+(\d{5})\b", selected, re.I))
+        if ids != {expected}:
+            raise InspectionPageLost("ACE resume: draft store is missing or different; draft preserved.")
+
+    def _ace_operation_picker(self, item: InspectionItem) -> Optional[bool]:
+        card = self.page.locator(".QuestionCard").filter(has=self.page.get_by_text(item.question, exact=True))
+        trigger = card.locator(".select-selected-container").filter(visible=True)
+        if not trigger.count():
+            return None  # Older versions of the form use a native control.
+        if trigger.count() != 1:
+            return False
+        value = trigger.locator(".select-value")
+        label = item.answer.strip()
+        menu = card.locator(".select-menu").filter(visible=True)
+        if value.get_by_text(label, exact=True).count() and not menu.count():
+            return True
+        if not value.locator(".Placeholder").count() or (self._resume_path and not self._resume_current_data):
+            return False
+        try:
+            if not menu.count():
+                trigger.click(timeout=4000)
+            search = menu.get_by_placeholder("Search", exact=True)
+            search.fill(label, timeout=4000)
+            option = menu.locator(".option").filter(has=self.page.get_by_text(label, exact=True))
+            option.click(timeout=4000)
+            # SafetyCulture renders desktop and mobile copies of the same menu action.
+            done = menu.get_by_test_id("select-menu-primary-button").and_(
+                menu.get_by_role("button", name="Done", exact=True)
+            ).filter(visible=True)
+            done.first.click(timeout=4000)
+            card.locator(".select-menu").wait_for(state="hidden", timeout=4000)
+            value.get_by_text(label, exact=True).first.wait_for(state="visible", timeout=4000)
+            return True
+        except PWTimeout:
+            return False
+
+    def _resume_ace_item(self, item: InspectionItem):
+        if item.notes or item.image_paths:
+            raise ValueError("cannot reconcile existing media/notes without duplicating evidence")
+        key = self._compact_text(item.question)
+        if "signature" not in key and (is_no_answer(item.answer) or not item.answer.strip()):
+            return
+        if key in {"selectyourstore", "conductedon"}:
+            return  # Already checked against this audit; never rewrite its identity.
+        scope = self._section_scope_for_item(item)
+        card = self._find_question_container(item.question, scope, self.current_next_section)
+        if not card and item.question_alias:
+            card = self._find_question_container(item.question_alias, scope, self.current_next_section)
+        if not card:
+            raise ValueError("question not found in this section")
+        if "signature" in key:
+            if card.locator('img[alt*="signature" i], [data-testid="saved-signature"]').filter(visible=True).count():
+                return
+            raise ValueError("missing signed verification; no signature generated")
+
+        inputs = card.locator('textarea,input:not([type]),input:is([type="text"],[type="number"],[type="time"],[type="datetime-local"]),select').filter(visible=True)
+        choices = card.locator('input:is([type="radio"],[type="checkbox"]),[aria-pressed],[role="checkbox"][aria-checked],[role="radio"][aria-checked]').filter(visible=True)
+        combos = card.locator('[role="combobox"]:not(select),button[aria-haspopup="listbox"]').filter(visible=True)
+        if combos.count() == 1 and not choices.count():
+            combo = combos.first
+            read = "e => (e.value || e.innerText || '').trim()"
+            previous = combo.evaluate(read)
+            if previous and not re.fullmatch(r"(select|choose)( an?)?( option| answer| response)?[. …]*", previous, re.I):
+                return
+            if not self._resume_current_data:
+                raise ValueError("missing selection; CSV date does not match draft")
+            combo.click()
+            option = self.page.get_by_role("option", name=item.answer.strip(), exact=True).filter(visible=True)
+            option.first.wait_for(state="visible", timeout=3000)
+            if option.count() == 1:
+                option.click()
+                if self._normalize_answer_value(combo.evaluate(read)) == self._normalize_answer_value(item.answer):
+                    return
+            raise ValueError("dropdown selection not verified")
+        if inputs.count() == 1 and not choices.count():
+            field = inputs.first
+            if field.input_value().strip():
+                if not field.evaluate("e => e.validity.valid"):
+                    raise ValueError("existing answer is invalid; not overwritten")
+                return
+            if not self._resume_current_data:
+                raise ValueError("missing answer; CSV date does not match draft")
+            value = item.answer.strip()
+            tag, typ = field.evaluate("e=>[e.tagName,e.type]")
+            if typ == "time":
+                for fmt in ("%I:%M %p", "%H:%M"):
+                    try:
+                        value = datetime.strptime(value, fmt).strftime("%H:%M")
+                        break
+                    except ValueError:
+                        pass
+            if tag == "SELECT":
+                field.select_option(label=value, timeout=3000)
+                actual = field.locator("option:checked").inner_text()
+            else:
+                field.fill(value, timeout=3000)
+                field.press("Tab")
+                actual = field.input_value()
+            if actual.strip() == value and field.evaluate("e => e.validity.valid"):
+                return
+            raise ValueError("new answer not verified")
+        if choices.count() and not inputs.count():
+            if any(self._verify_button_answer(control, "") is True for control in choices.all()):
+                return
+            if not self._resume_current_data:
+                raise ValueError("missing selection; CSV date does not match draft")
+            choice = (card.get_by_role("checkbox") if item.answer.upper() == "TRUE"
+                      else card.get_by_role("button", name=item.answer, exact=True).or_(
+                          card.get_by_role("radio", name=item.answer, exact=True)))
+            target = choices.and_(choice).filter(visible=True)
+            if target.count() == 1 and all(control.evaluate("""e => e.checked === false ||
+                    e.getAttribute('aria-checked') === 'false' || e.getAttribute('aria-pressed') === 'false'""")
+                    for control in choices.all()):
+                target.click(timeout=3000)
+                if self._verify_button_answer(target, item.answer) is True:
+                    return
+        raise ValueError("cannot verify answer state; draft preserved")
+
     def _fill_header(self, data: InspectionData):
         self._log(f"Header: {data.site_location} | {data.inspection_date}")
         if data.inspection_date:
@@ -949,10 +1148,19 @@ class AutomationEngine:
             if item.answer.strip().upper() == "NEXTPAGE" or item.question.strip().upper() == "NEXTPAGE":
                 self.current_question = "NEXTPAGE"
                 self._log(f"  [{idx+1}/{total}] >>> Next Page")
-                if self._go_next_page():
+                before = dict(parse_qsl(urlsplit(self.page.url).query)).get("page", "") if self._resume_path else ""
+                moved = self._go_next_page()
+                if self._resume_path and moved:
+                    self._require_inspection_page()
+                    after = dict(parse_qsl(urlsplit(self.page.url).query)).get("page", "")
+                    if before.isdigit() and (not after.isdigit() or int(after) != int(before) + 1):
+                        raise InspectionPageLost("ACE resume: next page not confirmed on this draft; no submit.")
+                if moved:
                     self._items_ok += 1
                 else:
                     self.item_errors.append("Next page button not found")
+                    if self._resume_path:
+                        break
                 continue
 
             if item.section and item.section != current_section:
@@ -962,6 +1170,25 @@ class AutomationEngine:
                 self._scroll_to_section(current_section)
                 time.sleep(SCROLL_DELAY)
             self.current_section = current_section or item.section
+
+            if self._assigned_ace and item.question.casefold().startswith("what type of operation will occur today"):
+                result = self._ace_operation_picker(item)
+                if result is False:
+                    self.item_errors.append(f"Operation type not confirmed: {item.question}")
+                    break  # The following pages depend on this selection.
+                if result is True:
+                    self._items_ok += 1
+                    continue
+
+            if self._resume_path:
+                try:
+                    self._resume_ace_item(item)
+                    self._items_ok += 1
+                except ValueError as exc:
+                    self.item_errors.append(f"{item.question}: {exc}")
+                except PWTimeout:
+                    self.item_errors.append(f"{item.question}: control timed out on existing draft")
+                continue
 
             self._log(f"  [{idx+1}/{total}] {item.question[:40]}... -> {item.answer}")
 
@@ -3426,6 +3653,9 @@ class AutomationEngine:
 
     # ── Complete/Submit ──
     def _complete_inspection(self):
+        audit_path = urlsplit(self.page.url).path.rstrip("/")
+        if self._assigned_ace and not re.fullmatch(r"/inspection/audit_[^/]+", audit_path):
+            raise InspectionPageLost("Cannot identify this inspection. Nothing was submitted.")
         self._log("Submitting...")
         self._scroll_to_bottom()
         time.sleep(SCROLL_DELAY)
@@ -3439,6 +3669,8 @@ class AutomationEngine:
             raise RuntimeError(f"Complete/Submit button not found. url='{self.page.url}', screenshot='{ss}'")
         time.sleep(2.0)
         if self._detect_safetyculture_error():
+            if self._assigned_ace:
+                raise InspectionPageLost("Submission not confirmed after server error. Check this inspection before retrying.")
             self._raise_safetyculture_error_popup("safetyculture_error_submit")
 
         state = self._visible_dialog_state()
@@ -3447,7 +3679,8 @@ class AutomationEngine:
             ss = self._screenshot_error("submit_requires_attention")
             self._save_html_dump("submit_requires_attention")
             raise RuntimeError(f"SafetyCulture still has required items. url='{self.page.url}', screenshot='{ss}'")
-        if state["submitted"]:
+        if state["submitted"] and (not self._assigned_ace or urlsplit(self.page.url).path.rstrip("/") == audit_path):
+            self._verified_audit = (self.current_template, self.current_site, audit_path)
             self._log("  Submit complete dialog detected")
             self._click_dialog_button(['button:has-text("Save and close")', 'button:has-text("Close")'])
             time.sleep(PAGE_LOAD_WAIT)
@@ -3484,11 +3717,22 @@ class AutomationEngine:
                             continue
                 if confirmed:
                     break
-        else:
+        elif not self._assigned_ace:
             confirmed = self._click_first_found(confirm_sels, timeout=3000)
 
-        time.sleep(1.0)
+        if self._assigned_ace:
+            # The completion receipt can appear after the confirmation dialog closes.
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                state = self._visible_dialog_state()
+                if state["submitted"] or state["attention"]:
+                    break
+                time.sleep(0.25)
+        else:
+            time.sleep(1.0)
         if self._detect_safetyculture_error():
+            if self._assigned_ace:
+                raise InspectionPageLost("Submission not confirmed after server error. Check this inspection before retrying.")
             self._raise_safetyculture_error_popup("safetyculture_error_submit")
         state = self._visible_dialog_state()
         if state["attention"]:
@@ -3496,15 +3740,17 @@ class AutomationEngine:
             ss = self._screenshot_error("submit_requires_attention")
             self._save_html_dump("submit_requires_attention")
             raise RuntimeError(f"SafetyCulture still has required items. url='{self.page.url}', screenshot='{ss}'")
-        if state["submitted"]:
+        if state["submitted"] and (not self._assigned_ace or urlsplit(self.page.url).path.rstrip("/") == audit_path):
+            self._verified_audit = (self.current_template, self.current_site, audit_path)
             self._log("  Submit complete dialog detected")
             self._click_dialog_button(['button:has-text("Save and close")', 'button:has-text("Close")'])
             time.sleep(PAGE_LOAD_WAIT)
             return
 
-        # Some SafetyCulture flows submit immediately after the first Complete
-        # click, without a confirmation modal. Only block when an unknown
-        # visible dialog remains and no confirmation button could be clicked.
+        if self._assigned_ace:
+            raise InspectionPageLost(
+                "Submission not confirmed for this inspection. Check its status before retrying."
+            )
         if dialogs.count() > 0 and not confirmed:
             self._log(f"  DEBUG: visible dialog buttons: {self._visible_dialog_button_texts()}")
             ss = self._screenshot_error("confirm_submit_button_not_found")
@@ -3513,7 +3759,7 @@ class AutomationEngine:
         time.sleep(PAGE_LOAD_WAIT)
         try:
             self.page.wait_for_load_state("networkidle", timeout=15000)
-        except:
+        except PWTimeout:
             pass
 
     def _visible_dialog_state(self) -> dict:
@@ -3546,7 +3792,10 @@ class AutomationEngine:
             buttons = " | ".join(data.get("buttons", []))
             low = f"{text} | {buttons}".lower()
             state.update({"text": text, "buttons": buttons})
-            state["submitted"] = "view & export report" in low or "save and close" in low
+            state["submitted"] = (
+                any(b.strip().lower() == "view & export report" for b in data.get("buttons", []))
+                if self._assigned_ace else "view & export report" in low or "save and close" in low
+            )
             state["attention"] = (
                 "requires attention" in low or
                 "pending item" in low or

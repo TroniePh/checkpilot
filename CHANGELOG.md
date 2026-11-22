@@ -1,5 +1,11 @@
 # Changelog — CheckPilot™
 
+## v2.7.3 (2026-11-22)
+
+- VONS 02090 and 02041 can continue assigned ACE drafts without overwriting saved answers.
+- Verifies the ACE operation picker after closing its menu, before continuing through dependent pages.
+- Adds Diagnostics feedback and optional private Telegram error reports. Existing Telegram destinations and customer CSV are not changed.
+
 ## v2.7.2 (2026-11-21)
 
 - Opens the assigned ACE inspection from Templates for VONS 02041 and VONS 02090 instead of treating the schedule chooser as the form.

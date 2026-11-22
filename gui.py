@@ -36,8 +36,9 @@ from session_manager import (
 )
 from notifier import (
     load_telegram_config, save_telegram_config, test_connection as test_telegram,
-    send_daily_summary, send_error_alert, send_inspection_status, send_success_report,
+    send_daily_summary, send_error_alert, send_feedback, send_inspection_status, send_success_report,
 )
+from feedback import build_report
 from runlock import (
     is_already_run_today, mark_completed, get_remaining, reset_today,
     inspection_run_key,
@@ -887,6 +888,15 @@ class App(ctk.CTk):
         chat_ids = tg_cfg.get("chat_ids") or ([tg_cfg.get("chat_id")] if tg_cfg.get("chat_id") else [])
         if chat_ids: self.tg_chat.insert(0, ", ".join(chat_ids))
 
+        support = ctk.CTkFrame(c3, fg_color="transparent")
+        support.pack(fill="x", padx=12, pady=2)
+        ctk.CTkLabel(support, text="Feedback Chat ID:", anchor="w").pack(side="left")
+        self.tg_feedback_chat = ctk.CTkEntry(support, width=260, height=30)
+        self.tg_feedback_chat.pack(side="left", padx=8)
+        self.tg_feedback_chat.insert(0, tg_cfg.get("feedback_chat_id", ""))
+        self.tg_support_errors = ctk.BooleanVar(value=tg_cfg.get("auto_support_errors", False))
+        ctk.CTkCheckBox(support, text="Tự gửi lỗi tới ID này", variable=self.tg_support_errors).pack(side="left")
+
         tr3 = ctk.CTkFrame(c3, fg_color="transparent"); tr3.pack(fill="x", padx=12, pady=(6,10))
         self.tg_enabled = ctk.BooleanVar(value=tg_cfg.get("enabled", False))
         ctk.CTkCheckBox(tr3, text="Bật thông báo", variable=self.tg_enabled,
@@ -937,6 +947,7 @@ class App(ctk.CTk):
             ("Check update", self._check_update),
             ("Export config", self._export_cfg),
             ("Import config", self._import_cfg),
+            ("Gửi lỗi", self._show_feedback),
         ]
         for txt, cmd in btns:
             ctk.CTkButton(ar, text=txt, width=115, height=26, corner_radius=5,
@@ -958,6 +969,63 @@ class App(ctk.CTk):
         reset_today()
         messagebox.showinfo("OK", "Run lock cleared")
         self._pg_diag()
+
+    def _show_feedback(self):
+        from updater import get_current_version
+
+        cfg = load_telegram_config()
+        chat = cfg.get("feedback_chat_id", "")
+        inspections = self._schedule_full_inspections or self._full_inspections or self.inspections or []
+        try:
+            records = get_records(limit=6)
+        except (OSError, ValueError):
+            records = []
+        report = build_report(
+            get_current_version(), load_run_state(),
+            getattr(self.engine, "current_question", ""),
+            records, inspections,
+        )
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Gửi lỗi CheckPilot")
+        dialog.geometry("650x470")
+        dialog.transient(self)
+        text = ctk.CTkTextbox(dialog, wrap="word")
+        text.pack(fill="both", expand=True, padx=14, pady=(14, 8))
+        text.insert("1.0", report)
+        text.configure(state="disabled")
+        actions = ctk.CTkFrame(dialog, fg_color="transparent")
+        actions.pack(fill="x", padx=14, pady=(0, 10))
+        status = ctk.CTkLabel(
+            dialog, text=f"Telegram hỗ trợ: …{chat[-4:]}" if chat else "Chưa cấu hình Feedback Chat ID.",
+        )
+        status.pack(anchor="w", padx=14, pady=(0, 10))
+
+        def copy_report():
+            self.clipboard_clear()
+            self.clipboard_append(report)
+            status.configure(text="Đã sao chép báo cáo.")
+
+        def finish(ok):
+            if not dialog.winfo_exists():
+                return
+            status.configure(text="Đã gửi Telegram." if ok else "Không gửi được. Kiểm tra mạng hoặc sao chép báo cáo.")
+            if not ok:
+                send.configure(state="normal")
+
+        def send_report():
+            send.configure(state="disabled")
+            status.configure(text="Đang gửi Telegram…")
+
+            def worker():
+                ok = send_feedback(report, chat)
+                self._safe_after(0, lambda: finish(ok))
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        send = ctk.CTkButton(actions, text="Gửi Telegram", command=send_report,
+                             state="normal" if chat and cfg.get("bot_token") else "disabled")
+        send.pack(side="left", padx=(0, 8))
+        ctk.CTkButton(actions, text="Sao chép", command=copy_report).pack(side="left")
 
     def _reset_tmpl_locks(self):
         from template_lock import reset_all
@@ -1957,6 +2025,9 @@ class App(ctk.CTk):
                         status="running",
                         current_index=idx + 1,
                         current_template=insp.template_name,
+                        current_site=insp.site_location,
+                        current_account=account,
+                        scheduled_time=self._active_schedule_time,
                         total=total,
                         done=idx,
                         success=run_success,
@@ -2431,6 +2502,14 @@ class App(ctk.CTk):
             messagebox.showerror("Error", msg)
 
     def _save_tg(self):
+        feedback_chat_id = self.tg_feedback_chat.get().strip()
+        if self.tg_support_errors.get() and not feedback_chat_id:
+            messagebox.showwarning("Telegram", "Nhập Feedback Chat ID trước khi bật tự gửi lỗi.")
+            return False
+        if feedback_chat_id and (not feedback_chat_id.isascii() or not feedback_chat_id.isdecimal()
+                                 or feedback_chat_id.startswith("0") or len(feedback_chat_id) > 20):
+            messagebox.showwarning("Telegram", "Feedback Chat ID phải là ID cá nhân (số dương).")
+            return False
         chat_ids = [
             value.strip()
             for value in self.tg_chat.get().replace("\n", ",").replace(";", ",").split(",")
@@ -2440,9 +2519,12 @@ class App(ctk.CTk):
             "bot_token": self.tg_token.get().strip(),
             "chat_ids": chat_ids,
             "enabled": self.tg_enabled.get(),
+            "feedback_chat_id": feedback_chat_id,
+            "auto_support_errors": self.tg_support_errors.get(),
         }
         save_telegram_config(cfg)
         messagebox.showinfo("OK", f"Telegram config saved ({len(chat_ids)} chat)")
+        return True
 
     def _save_template_url(self):
         url = self.tpl_url.get().strip() if hasattr(self, "tpl_url") else ""
@@ -2480,7 +2562,8 @@ class App(ctk.CTk):
             messagebox.showerror("Error", f"Lỗi: {e}")
 
     def _test_tg(self):
-        self._save_tg()
+        if not self._save_tg():
+            return
         ok, msg = test_telegram()
         if ok:
             messagebox.showinfo("OK", msg)
