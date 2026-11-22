@@ -880,7 +880,7 @@ class App(ctk.CTk):
         actions = ctk.CTkFrame(dialog, fg_color="transparent")
         actions.pack(fill="x", padx=14, pady=(0, 10))
         status = ctk.CTkLabel(
-            dialog, text=f"Telegram hỗ trợ: …{chat[-4:]}" if chat else "Chưa cấu hình Feedback Chat ID.",
+            dialog, text=f"Telegram hỗ trợ: …{chat[-4:]}" if chat else "Chưa cấu hình Chat ID hỗ trợ.",
         )
         status.pack(anchor="w", padx=14, pady=(0, 10))
 
@@ -2390,11 +2390,11 @@ class App(ctk.CTk):
     def _save_tg(self):
         feedback_chat_id = self.tg_feedback_chat.get().strip()
         if self.tg_support_errors.get() and not feedback_chat_id:
-            messagebox.showwarning("Telegram", "Nhập Feedback Chat ID trước khi bật tự gửi lỗi.")
+            messagebox.showwarning("Telegram", "Nhập Chat ID hỗ trợ trước khi bật tự gửi lỗi.")
             return False
         if feedback_chat_id and (not feedback_chat_id.isascii() or not feedback_chat_id.isdecimal()
                                  or feedback_chat_id.startswith("0") or len(feedback_chat_id) > 20):
-            messagebox.showwarning("Telegram", "Feedback Chat ID phải là ID cá nhân (số dương).")
+            messagebox.showwarning("Telegram", "Chat ID hỗ trợ phải là ID cá nhân (số dương).")
             return False
         chat_ids = [
             value.strip()

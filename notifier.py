@@ -252,8 +252,21 @@ def test_connection() -> tuple:
     """Test all configured Telegram recipients. Returns (success, message)."""
     cfg = load_telegram_config()
     recipients = cfg.get("recipients", [])
-    if not recipients:
+    support_chat = cfg.get("feedback_chat_id", "")
+    if not recipients and not (cfg.get("bot_token") and support_chat):
         return False, "Chưa cấu hình Bot Token hoặc Chat ID"
+    support_note = ""
+    if support_chat:
+        sent = send_feedback(
+            f"CheckPilot | Lỗi thử | {datetime.now().astimezone().isoformat(timespec='seconds')}\n"
+            "Đây là báo lỗi mẫu từ nút Gửi thử. Lỗi thật sẽ gửi tới chat này"
+            + (" khi bật 'Tự gửi lỗi tới ID này'." if cfg["auto_support_errors"] else " sau khi bật 'Tự gửi lỗi tới ID này'."),
+            support_chat,
+        )
+        support_note = ("Đã gửi lỗi thử tới Chat ID hỗ trợ." if sent else
+                        "Không gửi được tới Chat ID hỗ trợ (kiểm tra ID và đã bấm Start với bot chưa).")
+    if not recipients:
+        return support_note.startswith("Đã"), support_note
     ok_count = 0
     failures = []
     for recipient in recipients:
@@ -271,11 +284,12 @@ def test_connection() -> tuple:
         except Exception as e:
             failures.append(f"{recipient.get('chat_id', '?')}: {type(e).__name__}")
 
+    suffix = f"\n{support_note}" if support_note else ""
     if ok_count == len(recipients):
-        return True, f"OK - đã gửi test tới {ok_count} chat"
+        return True, f"OK - đã gửi test tới {ok_count} chat" + suffix
     if ok_count > 0:
-        return True, f"OK một phần: {ok_count}/{len(recipients)} chat. Lỗi: {'; '.join(failures[:2])}"
-    return False, "Không gửi được Telegram: " + "; ".join(failures[:3])
+        return True, f"OK một phần: {ok_count}/{len(recipients)} chat. Lỗi: {'; '.join(failures[:2])}" + suffix
+    return False, "Không gửi được Telegram: " + "; ".join(failures[:3]) + suffix
 
 
 def _send_test_message(recipient: dict, bot_name: str) -> bool:

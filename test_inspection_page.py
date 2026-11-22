@@ -406,6 +406,23 @@ def test_completion_needs_receipt_on_same_audit():
         browser.close()
 
 
+def test_yummi_rice_slurry_ph_is_randomized_each_run():
+    engine = AutomationEngine(account_name="test")
+    engine.current_template = "Yummi Sushi - Sushi Rice pH Testing"
+    answers = []
+    with patch.object(engine, "_check_state"), patch.object(engine, "_require_inspection_page"), \
+            patch.object(engine, "_dismiss_popups"), patch("automation.time.sleep"), \
+            patch.object(engine, "_answer_question", side_effect=lambda it: answers.append(it.answer) or True):
+        for _ in range(60):
+            engine._fill_all_items([
+                InspectionItem("", "What is the pH of the Rice Slurry?", "3.92"),
+                InspectionItem("", "How many cups of water used for Rice Slurry?", "4"),
+            ])
+    ph, cups = answers[::2], answers[1::2]
+    assert all(len(v) == 4 and 3.93 <= float(v) <= 4.00 for v in ph)
+    assert len(set(ph)) > 1 and set(cups) == {"4"}
+
+
 if __name__ == "__main__":
     test_von_resume_all_seven_pages()
     test_completion_needs_receipt_on_same_audit()
@@ -413,3 +430,4 @@ if __name__ == "__main__":
     test_bundled_ace_schedule_keeps_both_profiles()
     test_templates_opens_assigned_ace_and_refuses_duplicate_matches()
     test_ace_fills_controls_for_both_profiles_without_submitting()
+

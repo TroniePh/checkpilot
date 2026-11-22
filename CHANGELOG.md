@@ -1,5 +1,12 @@
 # Changelog — CheckPilot™
 
+## v2.7.6 (2026-11-22)
+
+- Restores the random answer for "What is the pH of the Rice Slurry?" in Yummi Sushi - Sushi Rice pH Testing (3.93 to 4.00, two decimals). It had been lost in v2.7.2.
+- Telegram "Gửi thử" also sends a sample error report to the support Chat ID, and works when only the support Chat ID is set.
+
+---
+
 ## v2.7.5 (2026-11-22)
 
 - Fixes VONS 02090 and 02041 ACE scheduled inspections not opening ("find assigned card") and resumed drafts not filling: Yes/No, time lists and time fields, linked calculated answers, and multi-page sections.
