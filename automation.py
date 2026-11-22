@@ -73,7 +73,6 @@ class AutomationEngine:
         self._stopped = False
         self._resume_path = ""
         self._assigned_ace = False
-        self._resume_current_data = False
         self.item_errors: List[str] = []
         self.current_template = ""
         self.current_site = ""
@@ -353,7 +352,6 @@ class AutomationEngine:
         for attempt in range(1, max_attempts + 1):
             self._verified_audit = None
             self._resume_path = ""
-            self._resume_current_data = False
             self.item_errors = []
             self.current_template = data.template_name
             self.current_site = data.site_location
@@ -965,7 +963,6 @@ class AutomationEngine:
         draft_dates = dates(date_text)
         if len(draft_dates) != 1 or draft_dates != dates(data.inspection_date):
             raise InspectionPageLost("ACE resume: draft date does not match this run; draft preserved.")
-        self._resume_current_data = draft_dates == dates(data.source_date)
         store_labels = store.evaluate("""e => {
             const picker = e.querySelector('select,input:not([type=hidden]),[role=combobox],[aria-haspopup=listbox]');
             if (picker?.tagName === 'SELECT') return picker.selectedOptions[0]?.text || '';
@@ -1001,7 +998,7 @@ class AutomationEngine:
         menu = card.locator(".select-menu").filter(visible=True)
         if value.get_by_text(label, exact=True).count() and not menu.count():
             return True
-        if not value.locator(".Placeholder").count() or (self._resume_path and not self._resume_current_data):
+        if not value.locator(".Placeholder").count():
             return False
         try:
             if not menu.count():
@@ -1049,8 +1046,6 @@ class AutomationEngine:
             previous = combo.evaluate(read)
             if previous and not re.fullmatch(r"(select|choose)( an?)?( option| answer| response)?[. …]*", previous, re.I):
                 return
-            if not self._resume_current_data:
-                raise ValueError("missing selection; CSV date does not match draft")
             combo.click()
             option = self.page.get_by_role("option", name=item.answer.strip(), exact=True).filter(visible=True)
             option.first.wait_for(state="visible", timeout=3000)
@@ -1065,8 +1060,6 @@ class AutomationEngine:
                 if not field.evaluate("e => e.validity.valid"):
                     raise ValueError("existing answer is invalid; not overwritten")
                 return
-            if not self._resume_current_data:
-                raise ValueError("missing answer; CSV date does not match draft")
             value = item.answer.strip()
             tag, typ = field.evaluate("e=>[e.tagName,e.type]")
             if typ == "time":
@@ -1089,8 +1082,6 @@ class AutomationEngine:
         if choices.count() and not inputs.count():
             if any(self._verify_button_answer(control, "") is True for control in choices.all()):
                 return
-            if not self._resume_current_data:
-                raise ValueError("missing selection; CSV date does not match draft")
             choice = (card.get_by_role("checkbox") if item.answer.upper() == "TRUE"
                       else card.get_by_role("button", name=item.answer, exact=True).or_(
                           card.get_by_role("radio", name=item.answer, exact=True)))

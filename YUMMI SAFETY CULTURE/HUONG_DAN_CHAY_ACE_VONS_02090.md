@@ -10,33 +10,34 @@
 ## Setup account moi
 
 1. Mo CheckPilot.
-2. Vao `Settings`.
-3. O `SafetyCulture profiles`, nhap:
-   - Profile: `ace_vons_02090`
-   - Email/password SafetyCulture cua account moi
+2. Vao trang `Tai khoan`.
+3. O `Danh sach tai khoan`, bam `+ Them tai khoan` va nhap:
+   - Ten account: `ace_vons_02090`
+   - Email/mat khau SafetyCulture cua account moi
    - Folder URL: de trong neu template nam o trang Templates chung; neu khach co folder rieng thi dan link folder SafetyCulture vao day.
 4. Bam `Luu`.
 
 ## Chay test template moi truoc
 
-1. Chon file `ace_vons_02090_test_template.csv`.
-2. Image folder chon thu muc `YUMMI SAFETY CULTURE`.
-3. Bam `Validate`.
-4. Bam `Load`.
-5. Chon `Test Mode`, khong chon Auto submit.
-6. Chon template `ACE Daily Food Safety Log`.
-7. Bam `Test`.
+1. Trang `Tu dong`, buoc 1: chon file `ace_vons_02090_test_template.csv`.
+2. Thu muc anh chon thu muc `YUMMI SAFETY CULTURE`.
+3. Bam `Kiem tra`.
+4. Bam `Tai du lieu`.
+5. Buoc 2: chon `Thu – khong submit`.
+6. Dong `Chay thu`: bam `Chon muc…`, chon template `ACE Daily Food Safety Log`.
+7. Bam `Test` (hoac `Chay thu muc da chon`).
 8. Lan dau co the app mo browser de login account moi. Login xong app se luu session rieng cho profile `ace_vons_02090`.
-9. Sau khi app dien xong form, kiem tra tren SafetyCulture. Neu dung thi bam `Stop` trong app de ket thuc test.
+9. Sau khi app dien xong form, kiem tra tren SafetyCulture. Neu dung thi bam `Dung` trong app de ket thuc test.
 
 ## Chay production hang ngay
 
 1. Chon file `customer_schedule_data.csv`.
-2. Image folder chon thu muc `YUMMI SAFETY CULTURE`.
-3. Bam `Validate`, sau do `Load`.
-4. Vao tab `Lich hen`.
-5. Bat schedule va bam `Lay gio tu CSV`.
-6. Bam `Luu`.
+2. Thu muc anh chon thu muc `YUMMI SAFETY CULTURE`.
+3. Bam `Kiem tra`, sau do `Tai du lieu`.
+4. Vao trang `Lich chay`.
+5. Bat `Bat lich chay` va bam `Lay gio tu CSV`.
+6. Bam `Luu lich`.
+7. Quay lai trang `Tu dong`, bam `Cho lich`.
 
 Slot `17:00` se chay theo block account:
 

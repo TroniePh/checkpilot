@@ -92,49 +92,53 @@ Hỗ trợ: JPG, PNG.
 
 ## Chạy phần mềm
 
-### Bước 1: Load dữ liệu
+Trang **Tự động** chia làm 3 bước, làm lần lượt từ trên xuống.
 
-1. Tab **Automation** → click **Browse** ở dòng File → chọn file Excel/CSV
-2. Click **Browse** ở dòng Ảnh → chọn thư mục chứa ảnh (bỏ qua nếu không có ảnh)
-3. Click **Load** → thấy hiện xanh "X insp - Y items" là OK
+### Bước 1: Dữ liệu
 
-### Bước 2: Validate (khuyến nghị)
+1. Dòng **File dữ liệu** → bấm **Đổi…** → chọn file Excel/CSV
+2. Dòng **Thư mục ảnh** → bấm **Đổi…** → chọn thư mục chứa ảnh (bỏ qua nếu không có ảnh)
+3. Bấm **Kiểm tra** để soát lỗi file. App sẽ báo (chi tiết ở khung **Nhật ký** phía dưới):
+   - Thiếu cột nào
+   - Câu hỏi nào trống
+   - Đáp án nào không nhận diện được
+   - Ảnh nào không tìm thấy
 
-Click **Validate** để kiểm tra file có lỗi gì không. App sẽ báo:
-- Thiếu cột nào
-- Câu hỏi nào trống
-- Đáp án nào không nhận diện được
-- Ảnh nào không tìm thấy
+   Sửa xong bấm **Kiểm tra** lại cho đến khi hiện "Dữ liệu hợp lệ".
+4. Bấm **Tải dữ liệu** → thấy dòng xanh "✓ X inspection · Y mục" là OK
 
-Sửa xong validate lại cho đến khi hiện "Dữ liệu hợp lệ".
+### Chạy thử (lần đầu bắt buộc)
 
-### Bước 3: Chạy thử (lần đầu bắt buộc)
-
-Click **"Chạy thử 1 dòng"** → app hiện bảng preview cho anh xem trước dữ liệu sẽ điền → click "Chạy thử".
+Vẫn ở Bước 1, dòng **Chạy thử**: bấm **Chọn mục…** → chọn 1 inspection → bấm **Chạy thử mục đã chọn** → app hiện bảng xem trước dữ liệu sẽ điền → bấm "Chạy thử".
 
 App sẽ:
 - Mở trình duyệt
-- Vào SafetyCulture 
+- Vào SafetyCulture
 - Tìm template
-- Điền 1 inspection đầu tiên
+- Điền inspection đã chọn
 - **DỪNG LẠI** — không submit
 
 Bạn kiểm tra trên trình duyệt xem điền đúng chưa. Nếu OK → đóng trình duyệt → chạy thật.
 
-### Bước 4: Chạy thật
+### Bước 2: Chế độ
 
-Tick các tùy chọn:
-- ☑ **Auto submit** — tự bấm Complete khi điền xong
-- ☑ **Từng inspection** — dừng giữa mỗi inspection để bạn kiểm tra (nên bật lúc đầu)
+Chọn 1 trong 2 chế độ:
+- **Thử – không submit** — chỉ điền form, không bấm Complete/Submit
+- **Tự động submit** — tự bấm Complete/Submit khi điền xong
+
+Tùy chọn thêm:
 - ☑ **Ngày = hôm nay** — tự lấy ngày hiện tại thay vì ngày trong file
+- ☑ **Tạm dừng sau mỗi inspection** — dừng giữa mỗi inspection để bạn kiểm tra (nên bật lúc đầu), bấm **Tiếp tục** để chạy tiếp
 
-Click **Start** → ngồi xem app chạy.
+### Bước 3: Chạy
 
-### Điều khiển:
+- **▶ Chạy ngay** — chạy toàn bộ file ngay bây giờ
+- **Chờ lịch** — chờ đến giờ trong trang **Lịch chạy** rồi tự chạy
+- **Tạm dừng / Tiếp tục** — tạm dừng hoặc chạy tiếp
+- **Dừng** — dừng hẳn
+- **Chạy lại lỗi** — chạy lại những inspection bị lỗi
 
-- **Pause** — tạm dừng
-- **Stop** — dừng hẳn
-- **Retry failed** — chạy lại những cái bị lỗi
+Thanh tiến trình và dòng "x/y inspection · Thành công · Lỗi · Còn lại" cho biết đang chạy tới đâu. Khung **Nhật ký** có thể bấm **Thu gọn** / **Mở rộng**.
 
 ---
 
@@ -142,27 +146,30 @@ Click **Start** → ngồi xem app chạy.
 
 Để không phải login SafetyCulture mỗi lần:
 
-1. Vào tab **Cài đặt**
-2. Mục "Đăng nhập SafetyCulture" → nhập email + password SafetyCulture
-3. Click **Lưu**
+1. Vào trang **Tài khoản**
+2. Mục **Tài khoản mặc định** → nhập email + mật khẩu SafetyCulture
+3. Bấm **Lưu**
+
+Nếu file có nhiều account (cột account), thêm từng account ở mục **Danh sách tài khoản** → **+ Thêm tài khoản**. Nhấp đúp vào một dòng để sửa.
 
 Từ lần sau app tự đăng nhập luôn, không cần thao tác gì.
 
 ---
 
-## Lịch hẹn tự động
+## Lịch chạy tự động
 
-Muốn app tự chạy mỗi ngày mà không cần mở lên bấm Start:
+Muốn app tự chạy mỗi ngày mà không cần mở lên bấm Chạy ngay:
 
-1. Vào tab **Lịch hẹn**
-2. Bật switch **"Bật lịch hẹn"**
-3. Thêm giờ chạy (ví dụ 05:00, 14:00) — bấm **"+ Thêm giờ"** để thêm nhiều lần/ngày
+1. Vào trang **Lịch chạy**
+2. Bật công tắc **"Bật lịch chạy"**
+3. Thêm giờ chạy (ví dụ 05:00, 14:00) — bấm **"+ Thêm giờ"** để thêm nhiều lần/ngày, hoặc **"Lấy giờ từ CSV"**
 4. Tick ngày trong tuần muốn chạy
-5. Click **Lưu**
+5. Bấm **Lưu lịch**
+6. Quay lại trang **Tự động** → bấm **Chờ lịch**
 
-**Điều kiện:** Máy tính phải bật 24/7 và app CheckPilot phải đang mở (có thể thu nhỏ xuống khay hệ thống).
+**Điều kiện:** Máy tính phải bật 24/7 và app CheckPilot phải đang mở (có thể bấm **Thu nhỏ** xuống khay hệ thống).
 
-**Lưu ý:** Phải Load dữ liệu trước khi bật lịch hẹn. App sẽ chạy dữ liệu đã load.
+**Lưu ý:** Phải bấm **Tải dữ liệu** trước khi bật lịch chạy. App sẽ chạy dữ liệu đã tải.
 
 ---
 
@@ -172,7 +179,7 @@ Muốn nhận thông báo khi chạy xong hoặc bị lỗi:
 
 1. Tạo bot Telegram (hỏi @BotFather trên Telegram)
 2. Lấy Bot Token + Chat ID
-3. Vào **Cài đặt** → mục Telegram → nhập Token + Chat ID → tick "Bật" → Lưu
+3. Vào **Cài đặt** → mục **Thông báo Telegram** → nhập Bot token + Chat ID → tick "Bật thông báo" → Lưu
 4. Click **Test** để thử
 
 ---
@@ -236,5 +243,5 @@ Gặp vấn đề gì không tự xử lý được:
 
 Khi liên hệ, gửi kèm:
 - Screenshot lỗi
-- File log (vào Diagnostics → Folders → Logs)
+- File log (vào trang Chẩn đoán → Mở thư mục → Nhật ký)
 - File Excel đang dùng (nếu liên quan đến dữ liệu)

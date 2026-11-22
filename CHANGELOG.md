@@ -1,5 +1,13 @@
 # Changelog — CheckPilot™
 
+## v2.7.4 (2026-11-22)
+
+- Fixes VONS 02090 and 02041 ACE Daily Food Safety Log drafts not being filled: a resumed draft is only used when its date matches the inspection date.
+- Redesigned interface, fully in Vietnamese: sidebar navigation, 3-step Automation page (Data → Mode → Run), new Accounts page, run history table, collapsible log.
+- Updated the user guides for the new layout.
+
+---
+
 ## v2.7.3 (2026-11-22)
 
 - VONS 02090 and 02041 can continue assigned ACE drafts without overwriting saved answers.

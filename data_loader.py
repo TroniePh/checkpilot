@@ -30,7 +30,6 @@ class InspectionData:
     template_folder_url: str = ""
     template_folder_name: str = ""
     items: List[InspectionItem] = field(default_factory=list)
-    source_date: str = ""  # Keep the CSV date when the scheduler sets inspection_date to today.
 
 
 REQUIRED_COLUMNS = [
@@ -180,7 +179,6 @@ def load_data(file_path: str, image_folder: str = "") -> List[InspectionData]:
         inspection = InspectionData(
             site_location=str(site).strip(),
             inspection_date=str(date).strip(),
-            source_date=str(date).strip(),
             template_name=str(template).strip(),
             run_time=_derive_group_run_time(group),
             account_name=str(account_name).strip(),

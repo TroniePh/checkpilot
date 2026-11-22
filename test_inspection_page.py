@@ -164,7 +164,7 @@ def test_templates_opens_assigned_ace_and_refuses_duplicate_matches():
                 alert.assert_not_called()
 
             in_progress = True
-            data.inspection_date = data.source_date = "2026-11-21"
+            data.inspection_date = "2026-11-21"
             data.items = [InspectionItem("", "Prior reading", "different"),
                           InspectionItem("", "Missing reading", "12.5"),
                           InspectionItem("", "Item checked", "TRUE")]
@@ -186,16 +186,7 @@ def test_templates_opens_assigned_ace_and_refuses_duplicate_matches():
                     header.assert_not_called()
                     assert complete.call_count == int(auto)
                     alert.assert_not_called()
-            data.source_date = "2026-11-03"
             complete.reset_mock()
-            engine._stopped = False
-            with patch.object(engine, "_abandon_current_inspection") as abandon:
-                assert not engine.run_inspection(data, auto_submit=True)
-                abandon.assert_not_called()
-            assert page.locator("#missing").input_value() == ""
-            assert not page.locator("#check").is_checked()
-            complete.assert_not_called()
-            data.source_date = data.inspection_date
             for changed, reason in [("site", "draft store"), ("date", "draft date"), ("signature", "missing signed")]:
                 original = draft_html
                 if changed == "site":
@@ -311,7 +302,9 @@ def test_von_resume_all_seven_pages():
         browser = pw.chromium.launch()
         for case in cases:
             assert len(case.items) == 42
-            case.source_date = case.inspection_date = "2026-11-21"
+            # The runner sets today's date; the CSV keeps its original date.
+            assert case.inspection_date != "2026-11-21"
+            case.inspection_date = "2026-11-21"
             pages = [[]]
             expected = {}
             last_section = ""
