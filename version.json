@@ -1,6 +1,6 @@
 {
-  "version": "2.7.4",
+  "version": "2.7.5",
   "release_date": "2026-11-22",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.7.4/CheckPilot_Setup_v2.7.4.exe",
-  "changelog": "Fixes VONS 02090/02041 ACE drafts not being filled, and a simpler Vietnamese interface: sidebar, 3-step Automation page, Accounts page, collapsible log."
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.7.5/CheckPilot_Setup_v2.7.5.exe",
+  "changelog": "Fixes VONS 02090/02041 ACE scheduled inspections not opening or filling, faster page loading, and Telegram notices for each finished test run."
 }

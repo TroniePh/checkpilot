@@ -1,5 +1,14 @@
 # Changelog — CheckPilot™
 
+## v2.7.5 (2026-11-22)
+
+- Fixes VONS 02090 and 02041 ACE scheduled inspections not opening ("find assigned card") and resumed drafts not filling: Yes/No, time lists and time fields, linked calculated answers, and multi-page sections.
+- Faster filling: page changes and form opening wait for the page itself instead of fixed network timeouts; time fields are typed directly.
+- Retries an answer once if SafetyCulture did not confirm it.
+- Telegram: test runs now send a notice when each template finishes filling; error alerts include the account name.
+
+---
+
 ## v2.7.4 (2026-11-22)
 
 - Fixes VONS 02090 and 02041 ACE Daily Food Safety Log drafts not being filled: a resumed draft is only used when its date matches the inspection date.

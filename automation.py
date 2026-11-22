@@ -26,7 +26,7 @@ from session_manager import (
     has_saved_session, save_session_state, get_session_state_path,
     has_saved_credentials, load_credentials, get_account_profile,
 )
-from notifier import send_error_alert
+from notifier import send_error_alert, send_inspection_status
 from app_settings import load_app_settings
 
 logger = logging.getLogger(__name__)
@@ -380,6 +380,7 @@ class AutomationEngine:
                         question=self.current_question,
                         url=self.page.url if self.page else "",
                         details=self.item_errors[:8],
+                        account=self.account_name or "default",
                     )
                     logger.exception("Inspection failed after SafetyCulture retries")
                     return False
@@ -437,6 +438,7 @@ class AutomationEngine:
                 else:
                     self._log("Đã nhập xong. Vui lòng kiểm tra rồi submit thủ công.")
                 self._log("  Test mode: không bấm Complete/Submit. Bấm Stop sau khi kiểm tra xong.")
+                self._notify_test_done(data)
                 # Keep browser open; wait for user to stop.
                 while not self._stopped:
                     time.sleep(1)
@@ -455,6 +457,7 @@ class AutomationEngine:
                     question=self.current_question,
                     url=self.page.url if self.page else "",
                     details=self.item_errors[:8],
+                    account=self.account_name or "default",
                 )
                 if not self._resume_path:
                     self._abandon_current_inspection("blocked_submit")
@@ -489,6 +492,7 @@ class AutomationEngine:
                 question=self.current_question,
                 url=self.page.url if self.page else "",
                 details=self.item_errors[:8],
+                account=self.account_name or "default",
             )
             logger.exception("Inspection failed")
             if not self._resume_path:
@@ -566,10 +570,16 @@ class AutomationEngine:
             self.page.goto(target_url, timeout=30000)
 
         try:
-            self.page.wait_for_load_state("networkidle", timeout=15000)
-        except:
-            pass
-        time.sleep(PAGE_LOAD_WAIT + 1)
+            # Templates list rendered, or bounced to the login page.
+            self.page.wait_for_function(
+                """() => location.hostname.startsWith('auth.') || location.pathname.includes('/login') ||
+                    Array.from(document.querySelectorAll('button'))
+                        .some(b => b.offsetParent && /start inspection/i.test(b.innerText))""",
+                timeout=20000,
+            )
+            time.sleep(1)
+        except Exception:
+            time.sleep(PAGE_LOAD_WAIT + 1)
 
         # Check login redirect
         if "auth." in self.page.url or "/login" in self.page.url:
@@ -608,7 +618,7 @@ class AutomationEngine:
         """Select the assigned inspection from the Templates start screen."""
         self._log(f"Opening the scheduled inspection: {template_name}")
         title = re.compile(
-            rf"^\s*{re.escape(template_name)}\s*[-\u2013\u2014]\s*Complete Daily\s*$", re.I
+            rf"^\s*{re.escape(template_name)}\s*[-\u2010-\u2015\u2212\ufe58\ufe63\uff0d]\s*Complete Daily\s*$", re.I
         )
         matches = self.page.get_by_text(title).filter(visible=True)
         stage = "find assigned card"
@@ -620,8 +630,8 @@ class AutomationEngine:
             matches.click(timeout=5000)
             stage = "find Start or Continue on assignment"
             panel = self.page.locator(
-                'aside, [role="dialog"], [aria-modal="true"], [role="complementary"], '
-                '[data-testid*="drawer" i]'
+                '[data-anchor="occurrence-details"], aside, [role="dialog"], [aria-modal="true"], '
+                '[role="complementary"], [data-testid*="drawer" i]'
             ).filter(has=self.page.get_by_text(title)).filter(visible=True)
             actions = panel.get_by_role("button", name=re.compile(r"^(Start|Continue) inspection$", re.I))
             actions = actions.filter(visible=True)
@@ -711,13 +721,35 @@ class AutomationEngine:
 
         self._wait_for_inspection_form(template_name, use_assigned_schedule)
 
-    def _wait_for_inspection_form(self, template_name: str, use_assigned_schedule: bool = False):
-        # Wait for inspection form to load
-        time.sleep(PAGE_LOAD_WAIT + 3)
+    def _notify_test_done(self, data: InspectionData):
+        """Telegram ping when a test-mode fill finishes (the browser stays open)."""
         try:
-            self.page.wait_for_load_state("networkidle", timeout=15000)
-        except:
-            pass
+            errors = self.item_errors
+            send_inspection_status(
+                f"TEST - có {len(errors)} lỗi, chưa submit" if errors else "TEST - đã điền xong, chưa submit",
+                data.template_name, data.site_location, account=self.account_name,
+                details="; ".join(errors[:3]),
+            )
+        except Exception as exc:
+            self._log(f"  WARN: Telegram test notice failed: {type(exc).__name__}")
+
+    def _wait_for_inspection_form(self, template_name: str, use_assigned_schedule: bool = False):
+        # Wait for the editor (or the scheduled-inspection choice) to render.
+        # SafetyCulture keeps polling, so networkidle alone always hits its timeout.
+        try:
+            self.page.wait_for_function(
+                """() => /^\\/inspection\\/(new|audit_)/.test(location.pathname) && (
+                    !!document.querySelector('[data-anchor$="-item"]') ||
+                    /you have \\d+ scheduled inspections? due for this template/i.test(document.body.innerText))""",
+                timeout=25000,
+            )
+            time.sleep(1.5)  # settle redirects from /inspection/new to the audit
+        except Exception:
+            time.sleep(PAGE_LOAD_WAIT + 3)
+            try:
+                self.page.wait_for_load_state("networkidle", timeout=15000)
+            except:
+                pass
 
         if use_assigned_schedule and self._showing_schedule_choice():
             self._start_assigned_inspection(template_name)
@@ -1018,6 +1050,30 @@ class AutomationEngine:
         except PWTimeout:
             return False
 
+    def _ace_list_select(self, card: Locator, label: str) -> Optional[bool]:
+        """Single-choice response list (ACE times etc.); None when the card has no such list."""
+        trigger = card.locator(".select-selected-container").filter(visible=True)
+        if trigger.count() != 1:
+            return None
+        menu = card.locator(".select-menu")
+        try:
+            trigger.click(timeout=4000)
+            search = menu.get_by_placeholder("Search", exact=True)
+            if search.count():
+                search.fill(label, timeout=4000)
+            option = menu.locator(".select-option").filter(has=self.page.get_by_text(label, exact=True))
+            option.first.wait_for(state="visible", timeout=4000)
+            if option.count() != 1:
+                raise PWTimeout("ambiguous option")
+            option.click(timeout=4000)
+            menu.wait_for(state="hidden", timeout=4000)
+            trigger.locator(".select-value").get_by_text(label, exact=True).wait_for(state="visible", timeout=4000)
+            return True
+        except PWTimeout:
+            if menu.filter(visible=True).count():
+                self.page.keyboard.press("Escape")
+            return False
+
     def _resume_ace_item(self, item: InspectionItem):
         if item.notes or item.image_paths:
             raise ValueError("cannot reconcile existing media/notes without duplicating evidence")
@@ -1032,67 +1088,48 @@ class AutomationEngine:
             card = self._find_question_container(item.question_alias, scope, self.current_next_section)
         if not card:
             raise ValueError("question not found in this section")
-        if "signature" in key:
-            if card.locator('img[alt*="signature" i], [data-testid="saved-signature"]').filter(visible=True).count():
-                return
+        if card.locator('[data-anchor^="calculation-value"]').count():
+            return  # Linked answer computed by SafetyCulture; there is nothing to fill.
+        state = card.evaluate(self._ACE_ANSWER_STATE_JS)
+        if state == "invalid":
+            raise ValueError("existing answer is invalid; not overwritten")
+        if state == "set":
+            return  # Keep whatever is already saved on the draft.
+        if "signature" in key and (is_no_answer(item.answer) or not item.answer.strip()):
             raise ValueError("missing signed verification; no signature generated")
+        if self._answer_question(item):
+            return
+        self._log("    Answer not confirmed; retrying once")
+        if not self._answer_question(item):
+            raise ValueError("answer not verified; draft preserved")
 
-        inputs = card.locator('textarea,input:not([type]),input:is([type="text"],[type="number"],[type="time"],[type="datetime-local"]),select').filter(visible=True)
-        choices = card.locator('input:is([type="radio"],[type="checkbox"]),[aria-pressed],[role="checkbox"][aria-checked],[role="radio"][aria-checked]').filter(visible=True)
-        combos = card.locator('[role="combobox"]:not(select),button[aria-haspopup="listbox"]').filter(visible=True)
-        if combos.count() == 1 and not choices.count():
-            combo = combos.first
-            read = "e => (e.value || e.innerText || '').trim()"
-            previous = combo.evaluate(read)
-            if previous and not re.fullmatch(r"(select|choose)( an?)?( option| answer| response)?[. …]*", previous, re.I):
-                return
-            combo.click()
-            option = self.page.get_by_role("option", name=item.answer.strip(), exact=True).filter(visible=True)
-            option.first.wait_for(state="visible", timeout=3000)
-            if option.count() == 1:
-                option.click()
-                if self._normalize_answer_value(combo.evaluate(read)) == self._normalize_answer_value(item.answer):
-                    return
-            raise ValueError("dropdown selection not verified")
-        if inputs.count() == 1 and not choices.count():
-            field = inputs.first
-            if field.input_value().strip():
-                if not field.evaluate("e => e.validity.valid"):
-                    raise ValueError("existing answer is invalid; not overwritten")
-                return
-            value = item.answer.strip()
-            tag, typ = field.evaluate("e=>[e.tagName,e.type]")
-            if typ == "time":
-                for fmt in ("%I:%M %p", "%H:%M"):
-                    try:
-                        value = datetime.strptime(value, fmt).strftime("%H:%M")
-                        break
-                    except ValueError:
-                        pass
-            if tag == "SELECT":
-                field.select_option(label=value, timeout=3000)
-                actual = field.locator("option:checked").inner_text()
-            else:
-                field.fill(value, timeout=3000)
-                field.press("Tab")
-                actual = field.input_value()
-            if actual.strip() == value and field.evaluate("e => e.validity.valid"):
-                return
-            raise ValueError("new answer not verified")
-        if choices.count() and not inputs.count():
-            if any(self._verify_button_answer(control, "") is True for control in choices.all()):
-                return
-            choice = (card.get_by_role("checkbox") if item.answer.upper() == "TRUE"
-                      else card.get_by_role("button", name=item.answer, exact=True).or_(
-                          card.get_by_role("radio", name=item.answer, exact=True)))
-            target = choices.and_(choice).filter(visible=True)
-            if target.count() == 1 and all(control.evaluate("""e => e.checked === false ||
-                    e.getAttribute('aria-checked') === 'false' || e.getAttribute('aria-pressed') === 'false'""")
-                    for control in choices.all()):
-                target.click(timeout=3000)
-                if self._verify_button_answer(target, item.answer) is True:
-                    return
-        raise ValueError("cannot verify answer state; draft preserved")
+    # "set" when the question card already holds an answer, "invalid" when a
+    # typed value fails validation, "" when it is still empty.
+    _ACE_ANSWER_STATE_JS = """c => {
+        const shown = e => e.offsetParent !== null;
+        for (const e of c.querySelectorAll('input:not([type=hidden]):not([type=file]),textarea,select')) {
+            if (!shown(e)) continue;
+            if (['checkbox', 'radio'].includes(e.type)) { if (e.checked) return 'set'; continue; }
+            if (e.tagName === 'SELECT') { if (e.selectedIndex > 0) return 'set'; continue; }
+            if (e.value.trim()) return e.validity.valid ? 'set' : 'invalid';
+        }
+        if (c.querySelector('[aria-checked=true],[aria-pressed=true],[aria-selected=true]')) return 'set';
+        if (c.querySelector('img[alt*="signature" i],[data-testid="saved-signature"]')) return 'set';
+        const listValue = c.querySelector('.select-selected-container .select-value');
+        if (listValue && !listValue.querySelector('.Placeholder') && listValue.innerText.trim()) return 'set';
+        // Yes/No style responses only expose selection through a filled inline background.
+        for (const b of c.querySelectorAll('button[style]')) {
+            const bg = b.style.backgroundColor;
+            if (b.innerText.trim() && bg && !/^(rgb\\(255, 255, 255\\)|white|transparent|rgba\\(0, 0, 0, 0\\))$/.test(bg)
+                && b.style.color === 'rgb(255, 255, 255)') return 'set';
+        }
+        for (const e of c.querySelectorAll('[role=combobox]:not(select),button[aria-haspopup=listbox]')) {
+            if (!shown(e)) continue;
+            const v = (e.value || e.innerText || '').trim();
+            if (v && !/^(select|choose)( an?)?( option| answer| response)?[. …]*$/i.test(v)) return 'set';
+        }
+        return '';
+    }"""
 
     def _fill_header(self, data: InspectionData):
         self._log(f"Header: {data.site_location} | {data.inspection_date}")
@@ -1333,6 +1370,12 @@ class AutomationEngine:
             self._log(f"    WARN: Question not found on page")
             return False
 
+        if self._assigned_ace:
+            picked = self._ace_list_select(container, item.answer.strip())
+            if picked is not None:
+                self._log(f"    {'Selected' if picked else 'WARN: List option not confirmed'}: {item.answer}")
+                return picked
+
         # Strategy 1: Try clicking a button answer (Yes/No/N/A etc.)
         if self._try_click_answer(container, item.answer):
             return True
@@ -1346,7 +1389,9 @@ class AutomationEngine:
         except ValueError:
             pass
 
-        if is_numeric:
+        time_input = self._assigned_ace and container.locator(
+            'input[placeholder="Enter time"]').filter(visible=True).count() == 1
+        if is_numeric or time_input:
             if self._try_fill_input(container, item.answer):
                 return True
 
@@ -2351,6 +2396,10 @@ class AutomationEngine:
                     const norm = (s) => (s || "").replace(/\\s+/g, " ").trim().toLowerCase();
                     const nodes = [el, ...Array.from(el.querySelectorAll("*"))];
                     const checkedAttrs = ["aria-checked", "aria-pressed", "aria-selected"];
+                    // SafetyCulture response buttons fill their inline background when selected.
+                    const bg = el.style ? el.style.backgroundColor : "";
+                    if (bg && el.style.color === "rgb(255, 255, 255)" &&
+                        !/^(rgb\\(255, 255, 255\\)|white|transparent|rgba\\(0, 0, 0, 0\\))$/.test(bg)) return true;
                     for (const node of nodes) {
                         if (node.checked === true) return true;
                         const state = norm(node.getAttribute("data-state") || "");
@@ -2618,6 +2667,10 @@ class AutomationEngine:
                                 (wantedCompact.length >= 10 && textCompact.includes(wantedCompact));
                         });
                     };
+                    // The sticky "Page N of M" header repeats the page title wherever the
+                    // page is scrolled, so it cannot mark where a section starts.
+                    const pageSelector = "[data-anchor='page-selector']";
+                    const inPageSelector = (el) => !!(el.closest(pageSelector) || el.querySelector(pageSelector));
                     const findSectionAnchor = (wantedCmp) => {
                         if (!wantedCmp) return null;
                         const sectionSelector = [
@@ -2626,6 +2679,7 @@ class AutomationEngine:
                         ].join(",");
                         const matches = Array.from(document.querySelectorAll(sectionSelector))
                             .filter(rendered)
+                            .filter((el) => !inPageSelector(el))
                             .map((el) => {
                                 const text = textOf(el);
                                 const cmp = compact(text);
@@ -2642,13 +2696,21 @@ class AutomationEngine:
                                 if (!a.exact && b.exact) return 1;
                                 if (a.starts && !b.starts) return -1;
                                 if (!a.starts && b.starts) return 1;
+                                // Partial matches: the closest heading wording wins, so the
+                                // choice does not flip with the scroll position.
+                                if (!a.exact && !a.starts && !b.starts && a.cmp.length !== b.cmp.length) {
+                                    return a.cmp.length - b.cmp.length;
+                                }
                                 return (Math.abs(a.rect.top) - Math.abs(b.rect.top)) ||
                                     (a.text.length - b.text.length);
                             });
                         return matches.length ? matches[0] : null;
                     };
                     const sectionAnchor = findSectionAnchor(wantedSectionCompact);
-                    const missingSectionScope = !!(wantedSectionCompact && !sectionAnchor);
+                    // A section named after the open page spans the whole page.
+                    const pageScope = !!wantedSectionCompact && Array.from(document.querySelectorAll(pageSelector))
+                        .some((el) => rendered(el) && compact(el.innerText).includes(wantedSectionCompact));
+                    const missingSectionScope = !!(wantedSectionCompact && !sectionAnchor && !pageScope);
                     const nextSectionAnchor = (() => {
                         if (!sectionAnchor) return null;
                         const anchor = findSectionAnchor(wantedNextSectionCompact);
@@ -2749,6 +2811,21 @@ class AutomationEngine:
         except:
             return ""
 
+    def _wait_page_header_change(self, before: str, timeout: float = 12) -> bool:
+        """True once the sticky 'Page N of M' header shows a different page."""
+        try:
+            self.page.wait_for_function(
+                """before => {
+                    const el = document.querySelector('[data-anchor="page-selector"]');
+                    return !!el && el.offsetParent !== null && el.innerText !== before
+                        && document.querySelector('[data-anchor$="-item"]');
+                }""",
+                arg=before, timeout=timeout * 1000,
+            )
+            return True
+        except Exception:
+            return False
+
     def _go_next_page(self) -> bool:
         """Click Next/Continue button to go to next page of the inspection form."""
         next_sels = [
@@ -2760,13 +2837,21 @@ class AutomationEngine:
             '[data-testid="next-page"]',
             'a:has-text("Next")',
         ]
+        header = self.page.locator('[data-anchor="page-selector"]').filter(visible=True)
+        try:
+            before = header.first.inner_text(timeout=1000) if header.count() == 1 else ""
+        except Exception:
+            before = ""
         clicked = self._click_first_found(next_sels, timeout=5000)
         if clicked:
-            time.sleep(PAGE_LOAD_WAIT)
-            try:
-                self.page.wait_for_load_state("networkidle", timeout=10000)
-            except:
-                pass
+            if before and self._wait_page_header_change(before):
+                time.sleep(0.8)  # let the new page's questions render
+            else:
+                time.sleep(PAGE_LOAD_WAIT)
+                try:
+                    self.page.wait_for_load_state("networkidle", timeout=10000)
+                except:
+                    pass
             self._log("    Page navigated")
             return True
         else:
