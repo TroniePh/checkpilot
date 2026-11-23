@@ -1,6 +1,6 @@
 {
-  "version": "2.7.6",
-  "release_date": "2026-11-22",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.7.6/CheckPilot_Setup_v2.7.6.exe",
-  "changelog": "Restores the random Rice Slurry pH (3.93-4.00) for Yummi Sushi, and the Telegram test button now also sends a sample error to the support Chat ID."
+  "version": "2.7.7",
+  "release_date": "2026-11-23",
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.7.7/CheckPilot_Setup_v2.7.7.exe",
+  "changelog": "Fixes VONS 02090 ACE scheduled inspection stopping with \"Could not open the assigned ACE inspection (find Start or Continue on assignment)\" even though the Continue inspection button was showing."
 }
