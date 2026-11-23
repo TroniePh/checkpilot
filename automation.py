@@ -630,19 +630,35 @@ class AutomationEngine:
             stage = "open assigned card"
             matches.click(timeout=5000)
             stage = "find Start or Continue on assignment"
-            panel = self.page.locator(
-                '[data-anchor="occurrence-details"], aside, [role="dialog"], [aria-modal="true"], '
-                '[role="complementary"], [data-testid*="drawer" i]'
-            ).filter(has=self.page.get_by_text(title)).filter(visible=True)
-            actions = panel.get_by_role("button", name=re.compile(r"^(Start|Continue) inspection$", re.I))
-            actions = actions.filter(visible=True)
-            actions.first.wait_for(state="visible", timeout=10000)
+            # The details drawer has no stable container: accept a Start/Continue button
+            # whose nearest ancestor holding the assignment title holds no other such button.
+            self.page.wait_for_function(
+                """(src) => {
+                    const act = /^\\s*(Start|Continue) inspection\\s*$/i, title = new RegExp(src, 'i');
+                    const vis = e => e.getClientRects().length > 0;
+                    document.querySelectorAll('[data-cp-ace-action]')
+                        .forEach(e => e.removeAttribute('data-cp-ace-action'));
+                    const btns = [...document.querySelectorAll('button, [role="button"]')]
+                        .filter(b => vis(b) && act.test(b.innerText));
+                    const titles = [...document.body.querySelectorAll('*')].filter(e => vis(e) &&
+                        title.test(e.innerText) && ![...e.children].some(c => title.test(c.innerText)));
+                    const hits = btns.filter(b => {
+                        for (let p = b.parentElement; p; p = p.parentElement)
+                            if (titles.some(t => p.contains(t)))
+                                return btns.filter(o => p.contains(o)).length === 1;
+                        return false;
+                    });
+                    hits.forEach(b => b.setAttribute('data-cp-ace-action', ''));
+                    return hits.length > 0;
+                }""",
+                arg=title.pattern,
+                timeout=10000,
+            )
+            actions = self.page.locator("[data-cp-ace-action]")
             if actions.count() != 1:
                 raise InspectionPageLost("Ambiguous ACE assignment actions; nothing started.")
-            resume = panel.get_by_role("button", name="Continue inspection", exact=True).filter(visible=True)
-            existing = resume.count() == 1
-            button = resume if existing else panel.get_by_role("button", name="Start inspection", exact=True)
-            button.click(timeout=5000)
+            existing = actions.inner_text().strip().lower().startswith("continue")
+            actions.click(timeout=5000)
             stage = "wait for inspection editor"
             self.page.wait_for_url("**/inspection/audit_*", timeout=NAVIGATION_TIMEOUT,
                                    wait_until="domcontentloaded")

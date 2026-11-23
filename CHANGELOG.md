@@ -1,5 +1,11 @@
 # Changelog — CheckPilot™
 
+## v2.7.7 (2026-11-23)
+
+- Fixes VONS 02090 ACE scheduled inspection stopping with "Could not open the assigned ACE inspection (find Start or Continue on assignment)": the assignment details panel is now found by its title instead of a fixed panel type, so the visible Start/Continue inspection button is clicked.
+
+---
+
 ## v2.7.6 (2026-11-22)
 
 - Restores the random answer for "What is the pH of the Rice Slurry?" in Yummi Sushi - Sushi Rice pH Testing (3.93 to 4.00, two decimals). It had been lost in v2.7.2.

@@ -97,8 +97,8 @@ def test_templates_opens_assigned_ace_and_refuses_duplicate_matches():
     title = TEMPLATE + " \u2013 Complete Daily"
     row = f'<button onclick="document.querySelector(\'#panel\').hidden=false">{title}</button>'
     panel = (
-        f'<aside id="panel" hidden><h2>{title}</h2><p>{TEMPLATE}</p>'
-        f'<button onclick="location.href=\'{AUDIT}?page=1\'">Start inspection</button></aside>'
+        f'<div id="panel" hidden><h2>{title}</h2><p>{TEMPLATE}</p>'
+        f'<button onclick="location.href=\'{AUDIT}?page=1\'">Start inspection</button></div>'
     )
 
     with sync_playwright() as pw:
