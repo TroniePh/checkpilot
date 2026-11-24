@@ -1,5 +1,12 @@
 # Changelog — CheckPilot™
 
+## v2.7.8 (2026-11-24)
+
+- Telegram: new "VONS bot token" and "VONS Chat ID" settings. VONS 02041 and 02090 alerts (running, done, blocked, errors, screenshots) go only to that chat, not the Yummi chat. Leave empty to keep everything in one chat.
+- If the browser is closed or crashes while filling ("Target page, context or browser has been closed"), CheckPilot reopens it, logs in again and reruns that template (up to 3 times) instead of stopping. It never reruns after Submit was clicked.
+
+---
+
 ## v2.7.7 (2026-11-23)
 
 - Fixes VONS 02090 ACE scheduled inspection stopping with "Could not open the assigned ACE inspection (find Start or Continue on assignment)": the assignment details panel is now found by its title instead of a fixed panel type, so the visible Start/Continue inspection button is clicked.

@@ -1,6 +1,6 @@
 {
-  "version": "2.7.7",
-  "release_date": "2026-11-23",
-  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.7.7/CheckPilot_Setup_v2.7.7.exe",
-  "changelog": "Fixes VONS 02090 ACE scheduled inspection stopping with \"Could not open the assigned ACE inspection (find Start or Continue on assignment)\" even though the Continue inspection button was showing."
+  "version": "2.7.8",
+  "release_date": "2026-11-24",
+  "download_url": "https://github.com/TroniePh/checkpilot/releases/download/v2.7.8/CheckPilot_Setup_v2.7.8.exe",
+  "changelog": "VONS 02041/02090 Telegram alerts can go to their own chat (Settings > Telegram > VONS Chat ID) instead of the Yummi chat. If the browser is closed or crashes mid-inspection, CheckPilot reopens it and reruns that template instead of stopping."
 }
