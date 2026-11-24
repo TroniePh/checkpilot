@@ -119,6 +119,28 @@ class AutomationEngine:
         except: pass
         self._log("Browser closed")
 
+    def _browser_alive(self) -> bool:
+        try:
+            if self.page and self.page.is_closed():
+                return False
+            if self.browser and not self.browser.is_connected():
+                return False
+        except Exception:
+            return False
+        return True
+
+    @staticmethod
+    def _is_browser_closed_error(e: Exception) -> bool:
+        return type(e).__name__ == "TargetClosedError" or "has been closed" in str(e)
+
+    def _restart_browser(self):
+        """Relaunch Chromium after it was closed or crashed mid-run."""
+        self._log("Browser was closed - relaunching...")
+        self.close_browser()
+        self.page = self.context = self.browser = self.playwright = None
+        self.start_browser()
+        self.wait_for_login()
+
     def pause(self): self._paused = True; self._log("Paused")
     def resume(self): self._paused = False; self._log("Resumed")
     def stop(self): self._stopped = True; self._log("Stop requested")
@@ -351,6 +373,13 @@ class AutomationEngine:
         # An uncertain start must not start the same scheduled assignment again.
         max_attempts = 1 if self._uses_assigned_schedule(data) else RUN_RETRY_MAX
         for attempt in range(1, max_attempts + 1):
+            if not self._stopped and not self._browser_alive():
+                try:
+                    self._restart_browser()
+                except Exception as e:
+                    self.item_errors = [f"Browser relaunch failed: {str(e)[:80]}"]
+                    self._log(f"FATAL: {self.item_errors[0]}")
+                    return False
             self._verified_audit = None
             self._resume_path = ""
             self.item_errors = []
@@ -387,6 +416,20 @@ class AutomationEngine:
                     return False
                 self._recover_after_safetyculture_error()
                 continue
+            except BrowserClosedError as e:
+                self._log(f"Browser closed during inspection ({attempt}/{max_attempts})")
+                if attempt >= max_attempts or self._stopped:
+                    self.item_errors.append(str(e))
+                    self._log(f"FATAL: {str(e)}")
+                    send_error_alert(
+                        str(e), None, data.template_name, data.site_location,
+                        question=self.current_question,
+                        details=self.item_errors[:8],
+                        account=self.account_name or "default",
+                    )
+                    return False
+                # Next loop iteration relaunches the browser and restarts the template.
+                continue
 
         return False
 
@@ -400,6 +443,7 @@ class AutomationEngine:
         self._items_ok = 0
         self._images_uploaded = 0
         self._images_failed = 0
+        submit_started = False
         prev_folder_url = self.template_folder_url
         prev_folder_name = self.template_folder_name
         if getattr(data, "template_folder_url", ""):
@@ -465,6 +509,7 @@ class AutomationEngine:
                 return False
 
             # Safe to submit
+            submit_started = True
             self._complete_inspection()
             self._log("Submitted OK")
             return True
@@ -485,6 +530,11 @@ class AutomationEngine:
             )
             return False
         except Exception as e:
+            # A closed browser before Submit is safe to rerun on a fresh browser.
+            # After Submit was clicked it may already be saved, so never rerun then.
+            if self._is_browser_closed_error(e) and not submit_started and not self._resume_path:
+                self._log(f"  Browser closed: {str(e)[:80]}")
+                raise BrowserClosedError(f"Browser closed mid-inspection: {str(e)[:120]}") from e
             ss = self._screenshot_error(f"fatal_{datetime.now().strftime('%H%M%S')}")
             self._save_html_dump(f"fatal_{datetime.now().strftime('%H%M%S')}")
             self._log(f"FATAL: {str(e)}")
@@ -1254,6 +1304,8 @@ class AutomationEngine:
             except SafetyCultureTransientError:
                 raise
             except Exception as e:
+                if self._is_browser_closed_error(e):
+                    raise
                 elapsed = time.time() - item_start
                 if elapsed > ITEM_TIMEOUT:
                     self._log(f"    TIMEOUT ({ITEM_TIMEOUT}s) - skipping item")
@@ -1289,6 +1341,8 @@ class AutomationEngine:
                     except SafetyCultureTransientError:
                         raise
                     except Exception as e:
+                        if self._is_browser_closed_error(e):
+                            raise
                         self._log(f"    Upload exception: {str(e)[:40]}")
                         self._images_failed += 1
                         if item.image_required:
@@ -4287,4 +4341,8 @@ class InspectionPageLost(RuntimeError):
 
 
 class SafetyCultureTransientError(Exception):
+    pass
+
+
+class BrowserClosedError(Exception):
     pass

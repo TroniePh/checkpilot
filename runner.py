@@ -168,9 +168,9 @@ def _prepare_inspections(data_file: str, image_folder: str) -> list:
     return inspections
 
 
-def _send_blocking_error(message: str, screenshot: Optional[str] = None):
+def _send_blocking_error(message: str, screenshot: Optional[str] = None, account: str = ""):
     _log(message)
-    send_error_alert(message, screenshot)
+    send_error_alert(message, screenshot, account=account)
 
 
 def _inspection_account(insp) -> str:
@@ -331,7 +331,7 @@ def execute_auto_run(scheduled_time: str = "") -> bool:
                 if not hc_ok:
                     screenshot = engine._screenshot_error("runner_health_check_failed")
                     failed = total - success
-                    _send_blocking_error(f"Health check failed: {hc_msg}", screenshot)
+                    _send_blocking_error(f"Health check failed: {hc_msg}", screenshot, account)
                     return False
 
             _log(

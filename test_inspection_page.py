@@ -431,3 +431,63 @@ if __name__ == "__main__":
     test_templates_opens_assigned_ace_and_refuses_duplicate_matches()
     test_ace_fills_controls_for_both_profiles_without_submitting()
 
+
+
+def test_browser_closed_mid_fill_relaunches_and_retries():
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        pages = []
+
+        def new_page():
+            page = browser.new_page()
+            page.route("**/*", lambda route: route.fulfill(
+                content_type="text/html",
+                body=LIST_HTML if route.request.url == BASE + LIST else FORM_HTML,
+            ))
+            pages.append(page)
+            engine.page = page
+
+        engine = AutomationEngine(account_name="test_profile")
+        new_page()
+        data = InspectionData("", "", TEMPLATE, items=[InspectionItem("", "Mock reading", "3.87")])
+
+        def open_templates(*_args):
+            engine.page.goto(BASE + LIST)
+
+        def start(*_args, **_kwargs):
+            engine.page.goto(BASE + AUDIT + "?page=1")
+
+        def answer(_item):
+            if len(pages) == 1:
+                engine.page.close()  # user closed the window / Chromium crashed
+                engine.page.locator("x").count()
+            return True
+
+        with (
+            patch("automation.time.sleep"),
+            patch("automation.send_error_alert") as alert,
+            patch.object(engine, "_screenshot_error"),
+            patch.object(engine, "_save_html_dump"),
+            patch.object(engine, "_go_to_inspections", side_effect=open_templates),
+            patch.object(engine, "_start_new_inspection", side_effect=start),
+            patch.object(engine, "_fill_header"),
+            patch.object(engine, "_answer_question", side_effect=answer),
+            patch.object(engine, "_restart_browser", side_effect=new_page) as restart,
+            patch.object(engine, "_complete_inspection") as complete,
+        ):
+            assert engine.run_inspection(data), engine.item_errors
+            restart.assert_called_once()
+            complete.assert_called_once()
+            alert.assert_not_called()
+
+            # Browser keeps dying: give up after RUN_RETRY_MAX, never submit.
+            restart.reset_mock()
+            complete.reset_mock()
+            pages.clear()
+            new_page()
+            restart.side_effect = lambda: (pages.clear(), new_page())
+            assert not engine.run_inspection(data)
+            complete.assert_not_called()
+            alert.assert_called_once()
+            assert "Browser closed" in engine.item_errors[-1]
+        browser.close()

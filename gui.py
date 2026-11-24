@@ -786,6 +786,18 @@ class App(ctk.CTk):
         chat_ids = tg_cfg.get("chat_ids") or ([tg_cfg.get("chat_id")] if tg_cfg.get("chat_id") else [])
         if chat_ids: self.tg_chat.insert(0, ", ".join(chat_ids))
 
+        vons_tok = self._row(c3, "VONS bot token", width=130)
+        self.tg_vons_token = ctk.CTkEntry(vons_tok, width=360, height=32, corner_radius=6, border_color=BORDER,
+                                          placeholder_text="Để trống = dùng chung Bot token ở trên", font=_font(11))
+        self.tg_vons_token.pack(side="left")
+        if tg_cfg.get("vons_bot_token"): self.tg_vons_token.insert(0, tg_cfg["vons_bot_token"])
+
+        vons_chat = self._row(c3, "VONS Chat ID", width=130)
+        self.tg_vons_chat = ctk.CTkEntry(vons_chat, width=360, height=32, corner_radius=6, border_color=BORDER,
+                                         placeholder_text="VONS 02041/02090 chỉ báo vào đây", font=_font(11))
+        self.tg_vons_chat.pack(side="left")
+        if tg_cfg.get("vons_chat_ids"): self.tg_vons_chat.insert(0, ", ".join(tg_cfg["vons_chat_ids"]))
+
         support = self._row(c3, "Chat ID hỗ trợ", width=130)
         self.tg_feedback_chat = ctk.CTkEntry(support, width=200, height=32, corner_radius=6,
                                              border_color=BORDER, font=_font(11))
@@ -1893,7 +1905,7 @@ class App(ctk.CTk):
                             screenshot = self.engine._screenshot_error("health_check_failed")
                         except Exception:
                             screenshot = None
-                        send_error_alert(f"Health check failed: {hc_msg}", screenshot)
+                        send_error_alert(f"Health check failed: {hc_msg}", screenshot, account=account)
                         return
                     self._log("Health check OK")
                 if self.adv.get(): insp.inspection_date = date.today().isoformat()
@@ -2404,6 +2416,8 @@ class App(ctk.CTk):
         cfg = {
             "bot_token": self.tg_token.get().strip(),
             "chat_ids": chat_ids,
+            "vons_bot_token": self.tg_vons_token.get().strip(),
+            "vons_chat_ids": self.tg_vons_chat.get(),
             "enabled": self.tg_enabled.get(),
             "feedback_chat_id": feedback_chat_id,
             "auto_support_errors": self.tg_support_errors.get(),

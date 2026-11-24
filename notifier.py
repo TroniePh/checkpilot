@@ -14,6 +14,16 @@ from config import DATA_DIR
 
 logger = logging.getLogger(__name__)
 TELEGRAM_CONFIG_FILE = os.path.join(DATA_DIR, "telegram.json")
+# VONS stores report to their own Telegram group, not the Yummi one.
+VONS_ACCOUNTS = {"von02041", "von02090", "ace_vons_02090"}
+VONS_SITES = ("vons 02041", "vons 02090")
+
+
+def is_vons(account: str = "", site: str = "") -> bool:
+    return (
+        str(account or "").strip().casefold() in VONS_ACCOUNTS
+        or str(site or "").strip().casefold().startswith(VONS_SITES)
+    )
 
 
 def _split_chat_ids(value) -> list:
@@ -43,12 +53,22 @@ def _normalize_config(config: dict) -> dict:
                 recipients.append({"name": "", "bot_token": bot_token, "chat_id": chat_id})
 
     first = recipients[0] if recipients else {"bot_token": "", "chat_id": ""}
+    vons_chat_ids = _split_chat_ids(config.get("vons_chat_ids", ""))
+    vons_token = str(config.get("vons_bot_token", "")).strip()
+    vons_bot = vons_token or bot_token or first.get("bot_token", "")
+    vons_recipients = [
+        {"name": "VONS", "bot_token": vons_bot, "chat_id": chat_id}
+        for chat_id in vons_chat_ids if vons_bot
+    ]
     return {
         "enabled": enabled,
         "bot_token": bot_token or first.get("bot_token", ""),
         "chat_id": first.get("chat_id", ""),
         "chat_ids": [r["chat_id"] for r in recipients],
         "recipients": recipients,
+        "vons_bot_token": vons_token,
+        "vons_chat_ids": vons_chat_ids,
+        "vons_recipients": vons_recipients,
         "feedback_chat_id": str(config.get("feedback_chat_id") or "").strip(),
         "auto_support_errors": config.get("auto_support_errors") is True,
     }
@@ -71,16 +91,18 @@ def save_telegram_config(config: dict):
         json.dump(normalized, f, indent=2, ensure_ascii=False)
 
 
-def _recipients() -> list:
+def _recipients(account: str = "", site: str = "") -> list:
     cfg = load_telegram_config()
     if not cfg.get("enabled"):
         return []
+    if cfg.get("vons_recipients") and is_vons(account, site):
+        return cfg["vons_recipients"]
     return cfg.get("recipients", [])
 
 
-def send_message(text: str) -> bool:
-    """Send text message to all configured Telegram recipients."""
-    recipients = _recipients()
+def send_message(text: str, account: str = "", site: str = "") -> bool:
+    """Send text message to the Telegram recipients for this account/site."""
+    recipients = _recipients(account, site)
     if not recipients:
         return False
     ok_count = 0
@@ -123,9 +145,9 @@ def send_feedback(text: str, chat_id: str) -> bool:
         return False
 
 
-def send_photo(photo_path: str, caption: str = "") -> bool:
-    """Send screenshot to all configured Telegram recipients."""
-    recipients = _recipients()
+def send_photo(photo_path: str, caption: str = "", account: str = "", site: str = "") -> bool:
+    """Send screenshot to the Telegram recipients for this account/site."""
+    recipients = _recipients(account, site)
     if not recipients or not os.path.exists(photo_path):
         return False
     ok_count = 0
@@ -176,7 +198,7 @@ def send_error_alert(error_msg: str, screenshot_path: Optional[str] = None,
         text += f"\n<b>Chi tiết:</b>\n{detail_text}\n"
     text += f"<b>Thời gian:</b> {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
 
-    send_message(text)
+    send_message(text, account, site)
     cfg = load_telegram_config()
     if cfg["auto_support_errors"] and cfg["feedback_chat_id"]:
         # Never forward raw exceptions, form answers, URLs or screenshots to support.
@@ -195,7 +217,8 @@ def send_error_alert(error_msg: str, screenshot_path: Optional[str] = None,
         ):
             logger.warning("Telegram support alert not delivered")
     if screenshot_path and os.path.exists(screenshot_path):
-        send_photo(screenshot_path, f"Screenshot loi: {template or ''} {str(error_msg)[:160]}".strip())
+        send_photo(screenshot_path, f"Screenshot loi: {template or ''} {str(error_msg)[:160]}".strip(),
+                   account, site)
 
 
 def send_success_report(template: str, site: str, items: int, errors: int,
@@ -217,7 +240,7 @@ def send_success_report(template: str, site: str, items: int, errors: int,
     if url:
         text += f"<b>URL:</b> {html.escape(str(url)[:220])}\n"
     text += f"<b>Time:</b> {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
-    send_message(text)
+    send_message(text, account, site)
     if screenshot_path and os.path.exists(screenshot_path):
         caption = (
             f"Saved OK: {template}\n"
@@ -226,7 +249,7 @@ def send_success_report(template: str, site: str, items: int, errors: int,
             f"Verified: {'Yes' if verified else 'Not checked'}\n"
             f"Time: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
         )
-        send_photo(screenshot_path, caption)
+        send_photo(screenshot_path, caption, account, site)
 
 
 def send_inspection_status(status: str, template: str, site: str,
@@ -245,13 +268,13 @@ def send_inspection_status(status: str, template: str, site: str,
     if details:
         text += f"<b>Details:</b> {html.escape(str(details)[:500])}\n"
     text += f"<b>Time:</b> {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
-    send_message(text)
+    send_message(text, account, site)
 
 
 def test_connection() -> tuple:
     """Test all configured Telegram recipients. Returns (success, message)."""
     cfg = load_telegram_config()
-    recipients = cfg.get("recipients", [])
+    recipients = cfg.get("recipients", []) + cfg.get("vons_recipients", [])
     support_chat = cfg.get("feedback_chat_id", "")
     if not recipients and not (cfg.get("bot_token") and support_chat):
         return False, "Chưa cấu hình Bot Token hoặc Chat ID"
